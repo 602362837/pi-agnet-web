@@ -10,6 +10,7 @@ import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { UsageStatsModal } from "./UsageStatsModal";
 import { BranchNavigator } from "./BranchNavigator";
+import { getRelativeFilePath } from "@/lib/file-paths";
 import { useTheme } from "@/hooks/useTheme";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
@@ -101,6 +102,15 @@ export function AppShell() {
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !searchParams.get("session"));
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
+
+  const handleAddChat = useCallback((filePath: string, selection?: { startLine: number; endLine: number }) => {
+    const relativePath = getRelativeFilePath(filePath, activeCwd ?? undefined);
+    let text = `\`${relativePath}\``;
+    if (selection) {
+      text += ` [line ${selection.startLine}-${selection.endLine}]`;
+    }
+    chatInputRef.current?.insertText(text);
+  }, [activeCwd]);
 
   const handleCwdChange = useCallback((cwd: string | null) => {
     setActiveCwd(cwd);
@@ -686,7 +696,7 @@ export function AppShell() {
         {/* File content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeFileTab?.filePath ? (
-            <FileViewer filePath={activeFileTab.filePath} cwd={activeCwd ?? undefined} />
+            <FileViewer filePath={activeFileTab.filePath} cwd={activeCwd ?? undefined} onAddChat={handleAddChat} />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
               No file open
