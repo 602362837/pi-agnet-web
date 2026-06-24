@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent, useMemo } from "react";
 import type { SlashCommandEntry } from "@/app/api/commands/route";
-import type { AttachedFile } from "@/lib/types";
+import type { AttachedFile, FileReference } from "@/lib/types";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
 
 export interface AttachedImage {
@@ -48,6 +48,7 @@ export interface ChatInputHandle {
   insertIfEmpty: (text: string) => void;
   addImages: (files: File[]) => void;
   addFiles: (files: File[]) => void;
+  addFileReference: (relativePath: string, lines?: { startLine: number; endLine: number }) => void;
 }
 
 const TOOL_PRESETS = ["off", "default", "full", "subagent"] as const;
@@ -201,6 +202,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [fileReferences, setFileReferences] = useState<FileReference[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -481,6 +483,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     addFiles(files: File[]) {
       processFileUploads(files);
     },
+    addFileReference(relativePath: string, lines?: { startLine: number; endLine: number }) {
+      addFileReference(relativePath, lines);
+    },
   }));
 
   const processImageFiles = useCallback(async (files: File[]) => {
@@ -568,16 +573,59 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setAttachedFiles([]);
   }, []);
 
+  const addFileReference = useCallback((relativePath: string, lines?: { startLine: number; endLine: number }) => {
+    setFileReferences((prev) => {
+      const exists = prev.some(
+        (ref) => ref.relativePath === relativePath && ref.startLine === lines?.startLine && ref.endLine === lines?.endLine
+      );
+      if (exists) return prev;
+      return [...prev, { relativePath, startLine: lines?.startLine, endLine: lines?.endLine }];
+    });
+  }, []);
+
+  const removeFileReference = useCallback((index: number) => {
+    setFileReferences((prev) => {
+      const next = [...prev];
+      next.splice(index, 1);
+      return next;
+    });
+  }, []);
+
+  const clearFileReferences = useCallback(() => {
+    setFileReferences([]);
+  }, []);
+
 
   const buildMessageWithAttachments = useCallback((msg: string): string => {
-    const fileRefs = attachedFiles.map((f) => {
-      const sizeStr = f.size < 1024 ? `${f.size} B` : f.size < 1024 * 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${(f.size / (1024 * 1024)).toFixed(1)} MB`;
-      return `📎 ${f.name} (${sizeStr}) — \`${f.path}\``;
-    });
-    if (!fileRefs.length) return msg;
-    const refText = fileRefs.join("\n");
-    return msg ? `${msg}\n\n${refText}` : refText;
-  }, [attachedFiles]);
+    const parts: string[] = [];
+
+    // File reference tags: serialize as backtick-wrapped paths with optional line info
+    if (fileReferences.length > 0) {
+      const refText = fileReferences
+        .map((ref) => {
+          let text = `\`${ref.relativePath}\``;
+          if (ref.startLine != null && ref.endLine != null) {
+            text += ` [line ${ref.startLine}-${ref.endLine}]`;
+          }
+          return text;
+        })
+        .join("\n");
+      parts.push(refText);
+    }
+
+    // Attached files: name + size + path
+    if (attachedFiles.length > 0) {
+      const fileText = attachedFiles.map((f) => {
+        const sizeStr = f.size < 1024 ? `${f.size} B` : f.size < 1024 * 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${(f.size / (1024 * 1024)).toFixed(1)} MB`;
+        return `📎 ${f.name} (${sizeStr}) — \`${f.path}\``;
+      }).join("\n");
+      parts.push(fileText);
+    }
+
+    if (!parts.length) return msg;
+    const attachmentText = parts.join("\n\n");
+    return msg ? `${msg}\n\n${attachmentText}` : attachmentText;
+  }, [fileReferences, attachedFiles]);
 
   const handleSend = useCallback(() => {
     const msg = value.trim();
@@ -591,10 +639,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setAtDismissedKey(null);
     clearImages();
     clearFiles();
+    clearFileReferences();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, attachedImages, attachedFiles, isStreaming, onSend, clearImages, clearFiles, buildMessageWithAttachments]);
+  }, [value, attachedImages, attachedFiles, fileReferences, isStreaming, onSend, clearImages, clearFiles, clearFileReferences, buildMessageWithAttachments]);
 
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
@@ -611,8 +660,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setAtDismissedKey(null);
     clearImages();
     clearFiles();
+    clearFileReferences();
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [value, attachedImages, attachedFiles, onSteer, onFollowUp, clearImages, clearFiles, buildMessageWithAttachments]);
+  }, [value, attachedImages, attachedFiles, fileReferences, onSteer, onFollowUp, clearImages, clearFiles, clearFileReferences, buildMessageWithAttachments]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -840,6 +890,52 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     background: "var(--bg-panel)", border: "1px solid var(--border)",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     cursor: "pointer", padding: 0, color: "var(--text-muted)",
+                  }}
+                >
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* File reference tags */}
+        {fileReferences.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {fileReferences.map((ref, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "4px 8px 4px 6px",
+                  background: "var(--bg-panel)",
+                  border: "1px solid var(--accent)",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  lineHeight: 1.3,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                  <polyline points="13 2 13 9 20 9" />
+                </svg>
+                <span style={{ color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180, fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                  {ref.relativePath}
+                </span>
+                {ref.startLine != null && ref.endLine != null && (
+                  <span style={{ color: "var(--accent)", whiteSpace: "nowrap", flexShrink: 0, fontSize: 11, fontWeight: 600 }}>
+                    L{ref.startLine}-{ref.endLine}
+                  </span>
+                )}
+                <button
+                  onClick={() => removeFileReference(i)}
+                  style={{
+                    width: 14, height: 14, borderRadius: "50%",
+                    background: "none", border: "none",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    cursor: "pointer", padding: 0, color: "var(--text-muted)", flexShrink: 0,
                   }}
                 >
                   <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -1112,16 +1208,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onSteer && (
                 <button
                   onClick={() => sendQueued("steer")}
-                  disabled={!value.trim() && !attachedImages.length && !attachedFiles.length}
+                  disabled={!value.trim() && !attachedImages.length && !attachedFiles.length && !fileReferences.length}
                   title="打断 Agent 当前运行，立即注入消息"
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: (value.trim() || attachedImages.length || attachedFiles.length) ? "rgba(234,179,8,0.12)" : "none",
+                    background: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "rgba(234,179,8,0.12)" : "none",
                     border: "1px solid rgba(234,179,8,0.35)",
                     borderRadius: 8,
-                    color: (value.trim() || attachedImages.length || attachedFiles.length) ? "rgba(180,130,0,1)" : "var(--text-dim)",
-                    cursor: (value.trim() || attachedImages.length || attachedFiles.length) ? "pointer" : "not-allowed",
+                    color: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "rgba(180,130,0,1)" : "var(--text-dim)",
+                    cursor: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background 0.12s",
                   }}
@@ -1135,16 +1231,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onFollowUp && (
                 <button
                   onClick={() => sendQueued("followup")}
-                  disabled={!value.trim() && !attachedImages.length && !attachedFiles.length}
+                  disabled={!value.trim() && !attachedImages.length && !attachedFiles.length && !fileReferences.length}
                   title="在 Agent 完成后排队发送"
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: (value.trim() || attachedImages.length || attachedFiles.length) ? "rgba(129,140,248,0.12)" : "none",
+                    background: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "rgba(129,140,248,0.12)" : "none",
                     border: "1px solid rgba(129,140,248,0.35)",
                     borderRadius: 8,
-                    color: (value.trim() || attachedImages.length || attachedFiles.length) ? "rgba(99,102,241,1)" : "var(--text-dim)",
-                    cursor: (value.trim() || attachedImages.length || attachedFiles.length) ? "pointer" : "not-allowed",
+                    color: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "rgba(99,102,241,1)" : "var(--text-dim)",
+                    cursor: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background 0.12s",
                   }}
@@ -1160,21 +1256,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           ) : (
             <button
               onClick={handleSend}
-              disabled={!value.trim() && !attachedImages.length && !attachedFiles.length}
+              disabled={!value.trim() && !attachedImages.length && !attachedFiles.length && !fileReferences.length}
               style={{
                 flexShrink: 0,
                 alignSelf: "flex-end",
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "7px 14px",
-                background: (value.trim() || attachedImages.length || attachedFiles.length) ? "var(--accent)" : "var(--bg-panel)",
+                background: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "var(--accent)" : "var(--bg-panel)",
                 border: "none",
                 borderRadius: 8,
-                color: (value.trim() || attachedImages.length || attachedFiles.length) ? "#fff" : "var(--text-dim)",
-                cursor: (value.trim() || attachedImages.length || attachedFiles.length) ? "pointer" : "not-allowed",
+                color: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "#fff" : "var(--text-dim)",
+                cursor: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "pointer" : "not-allowed",
                 fontSize: 13,
                 fontWeight: 600,
                 letterSpacing: "-0.01em",
-                boxShadow: (value.trim() || attachedImages.length || attachedFiles.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
+                boxShadow: (value.trim() || attachedImages.length || attachedFiles.length || fileReferences.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
                 transition: "background 0.15s, box-shadow 0.15s",
               }}
             >

@@ -93,7 +93,7 @@ export function AppShell() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
   const handleAtMention = useCallback((relativePath: string) => {
-    chatInputRef.current?.insertText("`" + relativePath + "`");
+    chatInputRef.current?.addFileReference(relativePath);
   }, []);
 
   const [initialSessionId] = useState<string | null>(() => searchParams.get("session"));
@@ -105,11 +105,7 @@ export function AppShell() {
 
   const handleAddChat = useCallback((filePath: string, selection?: { startLine: number; endLine: number }) => {
     const relativePath = getRelativeFilePath(filePath, activeCwd ?? undefined);
-    let text = `\`${relativePath}\``;
-    if (selection) {
-      text += ` [line ${selection.startLine}-${selection.endLine}]`;
-    }
-    chatInputRef.current?.insertText(text);
+    chatInputRef.current?.addFileReference(relativePath, selection);
   }, [activeCwd]);
 
   const handleCwdChange = useCallback((cwd: string | null) => {
