@@ -32,6 +32,7 @@ export async function GET(
     try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
     const allSessions = await listAllSessions();
     const parentSessionId = allSessions.find((s) => s.id === id)?.parentSessionId;
+    const archived = filePath.includes("/sessions-archive/");
     const info = header ? {
       path: filePath,
       id: header.id,
@@ -48,6 +49,7 @@ export async function GET(
           })()
         : "(no messages)",
       parentSessionId,
+      archived,
     } : null;
 
     const url = new URL(req.url);

@@ -210,6 +210,7 @@ export interface SessionInfo {
   messageCount: number;
   firstMessage: string;
   parentSessionId?: string; // set if this session was forked from another
+  archived?: boolean;       // true for archived sessions
   worktree?: WorktreeInfo;
   git?: GitInfo;
 }

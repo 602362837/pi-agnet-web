@@ -123,6 +123,12 @@ interface WorktreeContextMenuState {
   worktree: WorktreeInfo;
 }
 
+interface SessionContextMenuState {
+  x: number;
+  y: number;
+  session: SessionInfo;
+}
+
 interface WorktreeActionState {
   kind: "delete" | "archive";
   cwd: string;
@@ -311,6 +317,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const customPathInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const [selectedForArchive, setSelectedForArchive] = useState<Set<string>>(new Set());
+  const [archiveAllConfirming, setArchiveAllConfirming] = useState(false);
+  const [archiveAllBusy, setArchiveAllBusy] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [explorerKey, setExplorerKey] = useState(0);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
@@ -319,9 +330,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [worktreeError, setWorktreeError] = useState<string | null>(null);
   const [ephemeralWorktrees, setEphemeralWorktrees] = useState<Record<string, WorktreeInfo>>({});
   const [worktreeContextMenu, setWorktreeContextMenu] = useState<WorktreeContextMenuState | null>(null);
+  const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenuState | null>(null);
   const [worktreeAction, setWorktreeAction] = useState<WorktreeActionState | null>(null);
   const [removedWorktreeCwds, setRemovedWorktreeCwds] = useState<string[]>([]);
   const [selectedCwdGit, setSelectedCwdGit] = useState<GitInfo | undefined>(undefined);
+  const [archivedCounts, setArchivedCounts] = useState<Record<string, number>>({});
+  const [archivedCwds, setArchivedCwds] = useState<string[]>([]);
+  const [archivedSessions, setArchivedSessions] = useState<SessionInfo[]>([]);
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -330,8 +346,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       if (showLoading) setLoading(true);
       const res = await fetch("/api/sessions");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { sessions: SessionInfo[] };
+      const data = await res.json() as { sessions: SessionInfo[]; archivedCwds?: string[]; archivedCounts?: Record<string, number> };
       setAllSessions(data.sessions);
+      if (data.archivedCwds) setArchivedCwds(data.archivedCwds);
+      if (data.archivedCounts) setArchivedCounts(data.archivedCounts);
       setError(null);
       if (!showLoading) {
         setSessionRefreshDone(true);
@@ -345,12 +363,124 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, []);
 
+  const loadArchivedSessions = useCallback(async (cwd: string) => {
+    try {
+      const res = await fetch(`/api/sessions/archived?cwd=${encodeURIComponent(cwd)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { sessions: SessionInfo[] };
+      setArchivedSessions(data.sessions);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleArchiveSession = useCallback(async (sessionId: string) => {
+    try {
+      const res = await fetch("/api/sessions/archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionIds: [sessionId] }),
+      });
+      if (res.ok) {
+        setSelectedForArchive((prev) => {
+          const next = new Set(prev);
+          next.delete(sessionId);
+          return next;
+        });
+        void loadSessions(false);
+        setArchivedExpanded(false);
+        setArchivedSessions([]);
+      }
+    } catch {
+      // ignore
+    }
+  }, [loadSessions]);
+
+  const handleUnarchiveSession = useCallback(async (sessionId: string) => {
+    try {
+      const res = await fetch("/api/sessions/unarchive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionIds: [sessionId] }),
+      });
+      if (res.ok) {
+        void loadSessions(false);
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      }
+    } catch {
+      // ignore
+    }
+  }, [loadSessions]);
+
+  const handleBatchArchive = useCallback(async () => {
+    const ids = [...selectedForArchive];
+    if (ids.length === 0) return;
+    try {
+      const res = await fetch("/api/sessions/archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionIds: ids }),
+      });
+      if (res.ok) {
+        setSelectedForArchive(new Set());
+        void loadSessions(false);
+      }
+    } catch {
+      // ignore
+    }
+  }, [selectedForArchive, loadSessions]);
+
+  const handleArchiveAll = useCallback(async () => {
+    if (!selectedCwd) return;
+    setArchiveAllBusy(true);
+    try {
+      const res = await fetch("/api/sessions/archive-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: selectedCwd }),
+      });
+      if (res.ok) {
+        setArchiveAllConfirming(false);
+        void loadSessions(false);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setArchiveAllBusy(false);
+    }
+  }, [selectedCwd, loadSessions]);
+
+  const handleDeleteSession = useCallback(async (session: SessionInfo) => {
+    const title = session.name || session.firstMessage.slice(0, 50) || session.id.slice(0, 12);
+    if (!window.confirm(`删除会话 “${title}”？此操作不可恢复。`)) return;
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      if (res.ok) {
+        onSessionDeleted?.(session.id);
+        setSelectedForArchive((prev) => {
+          const next = new Set(prev);
+          next.delete(session.id);
+          return next;
+        });
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id));
+        void loadSessions(false);
+      }
+    } catch {
+      // ignore
+    }
+  }, [loadSessions, onSessionDeleted]);
+
   const initialLoadDone = useRef(false);
   useEffect(() => {
     const isFirst = !initialLoadDone.current;
     initialLoadDone.current = true;
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
+
+  useEffect(() => {
+    if (!archivedExpanded || !selectedCwd || (archivedCounts[selectedCwd] ?? 0) === 0) return;
+    void loadArchivedSessions(selectedCwd);
+  }, [archivedExpanded, selectedCwd, archivedCounts, loadArchivedSessions]);
 
   useEffect(() => {
     if (explorerRefreshKey !== undefined) setExplorerKey((k) => k + 1);
@@ -457,6 +587,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       setWorktreeContextMenu(null);
+      setSessionContextMenu(null);
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
         setCustomPathOpen(false);
@@ -586,6 +717,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   pinCwd(selectedCwd);
   for (const worktree of worktreeByCwd.values()) pinCwd(worktree.mainWorktreePath);
   for (const cwd of Object.keys(ephemeralWorktrees)) pinCwd(cwd);
+  // Add archived-only cwds (no active sessions) so projects remain visible
+  for (const acwd of archivedCwds) {
+    if (!acwd || extraCwds.includes(acwd)) continue;
+    if (!visibleSessions.some((s) => s.cwd === acwd)) {
+      extraCwds.push(acwd);
+    }
+  }
   const recentCwds = getRecentCwds(visibleSessions, extraCwds);
   const selectedWorktree = selectedCwd ? worktreeByCwd.get(selectedCwd) : undefined;
   const sessionGit = selectedCwd ? visibleSessions.find((s) => s.cwd === selectedCwd)?.git : undefined;
@@ -599,6 +737,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const workspaceTitle = formatWorkspaceHeaderTitle(selectedCwd, currentGit);
   const workspaceTitleDetail = formatWorkspaceTitle(selectedCwd, currentGit);
   const workspaceSubtitle = formatWorkspaceSubtitle(selectedCwd, currentGit);
+  const archivedOnlyCwds = new Set(archivedCwds.filter((acwd) => !visibleSessions.some((s) => s.cwd === acwd)));
   const cwdRows = buildCwdPickerRows(recentCwds, worktreeByCwd);
   const filteredSessions = selectedCwd
     ? visibleSessions.filter((s) => s.cwd === selectedCwd)
@@ -741,6 +880,81 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 </svg>
               )}
             </button>
+            {/* Workspace actions menu */}
+            {selectedCwd && (
+              <div ref={workspaceMenuRef} style={{ position: "relative" }}>
+                <button
+                  onClick={() => setWorkspaceMenuOpen((v) => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "var(--bg-hover)",
+                    border: "1px solid var(--border)",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    width: 32, height: 32,
+                    borderRadius: 7,
+                    padding: 0,
+                    flexShrink: 0,
+                  }}
+                  title="Workspace actions"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="5" r="1" />
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="12" cy="19" r="1" />
+                  </svg>
+                </button>
+                {workspaceMenuOpen && (
+                  <>
+                    <div
+                      onClick={() => setWorkspaceMenuOpen(false)}
+                      style={{ position: "fixed", inset: 0, zIndex: 999 }}
+                    />
+                    <div style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "100%",
+                      marginTop: 4,
+                      background: "var(--bg)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+                      zIndex: 1000,
+                      minWidth: 180,
+                      padding: "4px 0",
+                      overflow: "hidden",
+                    }}>
+                      <button
+                        onClick={() => {
+                          setWorkspaceMenuOpen(false);
+                          setArchiveAllConfirming(true);
+                        }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          width: "100%",
+                          padding: "9px 14px",
+                          background: "none",
+                          border: "none",
+                          color: "var(--text)",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          textAlign: "left",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        归档所有会话
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
         </div>
 
         {worktreeError && (
@@ -871,6 +1085,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {shortenCwd(row.cwd, homeDir)}
                       {row.syntheticParent && <span style={{ color: "var(--text-dim)", marginLeft: 5 }}>(main)</span>}
+                      {archivedOnlyCwds.has(row.cwd) && <span style={{ color: "var(--text-dim)", fontStyle: "italic", marginLeft: 5 }}>(archived)</span>}
                     </span>
                     <WorktreeBadge worktree={row.worktree} />
                   </button>
@@ -1050,6 +1265,49 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </div>
       )}
 
+      {sessionContextMenu && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: sessionContextMenu.x,
+            top: sessionContextMenu.y,
+            zIndex: 1000,
+            minWidth: 150,
+            padding: 4,
+            borderRadius: 8,
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.18)",
+          }}
+        >
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const session = sessionContextMenu.session;
+              setSessionContextMenu(null);
+              void handleArchiveSession(session.id);
+            }}
+            style={{ width: "100%", padding: "8px 10px", background: "none", border: "none", color: "var(--text)", textAlign: "left", cursor: "pointer", fontSize: 12, borderRadius: 6 }}
+          >
+            归档
+          </button>
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const session = sessionContextMenu.session;
+              setSessionContextMenu(null);
+              void handleDeleteSession(session);
+            }}
+            style={{ width: "100%", padding: "8px 10px", background: "none", border: "none", color: "#dc2626", textAlign: "left", cursor: "pointer", fontSize: 12, borderRadius: 6 }}
+          >
+            删除
+          </button>
+        </div>
+      )}
+
       {worktreeAction && (
         <div
           onMouseDown={(e) => e.stopPropagation()}
@@ -1115,6 +1373,40 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </div>
       )}
 
+      {/* Archive-all confirmation */}
+      {archiveAllConfirming && selectedCwd && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{ position: "fixed", inset: 0, zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.28)", padding: 16 }}
+        >
+          <div style={{ width: "min(420px, 100%)", borderRadius: 12, background: "var(--bg)", border: "1px solid var(--border)", boxShadow: "0 18px 50px rgba(0,0,0,0.25)", padding: 16 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
+              归档所有会话
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 16 }}>
+              确认归档 <strong>{(archivedCounts[selectedCwd] ?? 0) + filteredSessions.length}</strong> 个会话？
+              归档后可随时取消归档恢复。
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={() => setArchiveAllConfirming(false)}
+                disabled={archiveAllBusy}
+                style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-muted)", cursor: archiveAllBusy ? "not-allowed" : "pointer", fontSize: 12 }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => void handleArchiveAll()}
+                disabled={archiveAllBusy}
+                style={{ padding: "7px 12px", borderRadius: 7, border: "none", background: "var(--accent)", color: "#fff", cursor: archiveAllBusy ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700, opacity: archiveAllBusy ? 0.65 : 1 }}
+              >
+                {archiveAllBusy ? "归档中…" : "确认归档"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Session list */}
       <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
         {loading && (
@@ -1143,9 +1435,119 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               onSessionDeleted?.(id);
               loadSessions();
             }}
+            onArchive={handleArchiveSession}
+            onContextMenu={(event, session) => setSessionContextMenu({ x: event.clientX, y: event.clientY, session })}
             depth={0}
+            selectedForArchive={selectedForArchive}
+            onToggleSelect={(id) => {
+              setSelectedForArchive((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            }}
           />
         ))}
+
+        {/* Archived sessions section */}
+        {/* Batch archive action bar — appears as soon as any sessions are checked */}
+        {selectedForArchive.size > 0 && (
+          <div style={{
+            borderTop: "1px solid var(--border)",
+            padding: "8px 14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+              已选择 {selectedForArchive.size} 个会话
+            </span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                onClick={() => {
+                  setSelectedForArchive(new Set());
+                }}
+                style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-muted)", cursor: "pointer", fontSize: 11, fontWeight: 500 }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => void handleBatchArchive()}
+                disabled={selectedForArchive.size === 0}
+                style={{
+                  padding: "6px 12px", borderRadius: 7, border: "none",
+                  background: selectedForArchive.size === 0 ? "var(--border)" : "var(--accent)",
+                  color: selectedForArchive.size === 0 ? "var(--text-dim)" : "#fff",
+                  cursor: selectedForArchive.size === 0 ? "not-allowed" : "pointer",
+                  fontSize: 11, fontWeight: 600,
+                }}
+              >
+                归档 {selectedForArchive.size > 0 ? `(${selectedForArchive.size})` : ""}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {selectedCwd && !loading && !error && (archivedCounts[selectedCwd] ?? 0) > 0 && (
+          <div style={{ borderTop: "1px solid var(--border)", marginTop: 4 }}>
+            <button
+              onClick={() => {
+                if (!archivedExpanded) {
+                  setArchivedExpanded(true);
+                  loadArchivedSessions(selectedCwd);
+                } else {
+                  setArchivedExpanded(false);
+                }
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                width: "100%",
+                padding: "10px 14px",
+                background: "none",
+                border: "none",
+                color: "var(--text-dim)",
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ transform: archivedExpanded ? "none" : "rotate(-90deg)", transition: "transform 0.15s" }}
+              >
+                <polyline points="2 3.5 5 6.5 8 3.5" />
+              </svg>
+              <span>已归档 ({archivedCounts[selectedCwd]})</span>
+            </button>
+            {archivedExpanded && archivedSessions.length > 0 && (
+              <div>
+                {archivedSessions.map((archivedSession) => (
+                  <ArchivedSessionItem
+                    key={archivedSession.id}
+                    session={archivedSession}
+                    onSelect={() => onSelectSession(archivedSession)}
+                    onUnarchive={handleUnarchiveSession}
+                    onDelete={(id) => onSessionDeleted?.(id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* File Explorer section */}
@@ -1245,14 +1647,22 @@ function SessionTreeItem({
   onSelectSession,
   onRenamed,
   onSessionDeleted,
+  onArchive,
+  onContextMenu,
   depth,
+  selectedForArchive,
+  onToggleSelect,
 }: {
   node: SessionTreeNode;
   selectedSessionId: string | null;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
+  onArchive?: (id: string) => void;
+  onContextMenu?: (event: React.MouseEvent, session: SessionInfo) => void;
   depth: number;
+  selectedForArchive?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
@@ -1277,8 +1687,12 @@ function SessionTreeItem({
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
+          onArchive={onArchive}
+          onContextMenu={onContextMenu}
           depth={depth}
           hasChildren={hasChildren}
+          selectedForArchive={selectedForArchive?.has(node.session.id)}
+          onToggleSelect={onToggleSelect}
           collapsed={collapsed}
           onToggleCollapse={() => setCollapsed((v) => !v)}
         />
@@ -1293,7 +1707,11 @@ function SessionTreeItem({
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
+              onArchive={onArchive}
+              onContextMenu={onContextMenu}
               depth={depth + 1}
+              selectedForArchive={selectedForArchive}
+              onToggleSelect={onToggleSelect}
             />
           ))}
         </div>
@@ -1308,20 +1726,28 @@ function SessionItem({
   onClick,
   onRenamed,
   onDeleted,
+  onArchive,
+  onContextMenu,
   depth = 0,
   hasChildren = false,
   collapsed = false,
   onToggleCollapse,
+  selectedForArchive,
+  onToggleSelect,
 }: {
   session: SessionInfo;
   isSelected: boolean;
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
+  onArchive?: (id: string) => void;
+  onContextMenu?: (event: React.MouseEvent, session: SessionInfo) => void;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  selectedForArchive?: boolean;
+  onToggleSelect?: (id: string) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -1377,12 +1803,23 @@ function SessionItem({
     setConfirmDelete(false);
   }, []);
 
+  const handleArchiveClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onArchive?.(session.id);
+  }, [session.id, onArchive]);
+
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
   const ITEM_HEIGHT = 54;
 
   return (
     <div
       onClick={confirmDelete || renaming ? undefined : onClick}
+      onContextMenu={(event) => {
+        if (confirmDelete || renaming) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onContextMenu?.(event, session);
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
@@ -1472,6 +1909,20 @@ function SessionItem({
       ) : (
         /* ── Normal view ── */
         <>
+          {/* Multi-select checkbox */}
+          {onToggleSelect && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ display: "flex", alignItems: "center", flexShrink: 0 }}
+            >
+              <input
+                type="checkbox"
+                checked={!!selectedForArchive}
+                onChange={() => onToggleSelect(session.id)}
+                style={{ width: 14, height: 14, cursor: "pointer", accentColor: "var(--accent)" }}
+              />
+            </div>
+          )}
           {/* Fork indicator for child sessions */}
           {depth > 0 && (
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -1555,6 +2006,37 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
+              {/* Archive button — only for active (non-archived) sessions */}
+              {!session.archived && (
+                <button
+                  onClick={handleArchiveClick}
+                  title="Archive"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, padding: 0,
+                    background: "var(--bg-hover)", border: "1px solid var(--border)",
+                    borderRadius: 7, color: "var(--text-muted)",
+                    cursor: "pointer", flexShrink: 0,
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-selected)";
+                    e.currentTarget.style.color = "var(--accent)";
+                    e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.borderColor = "var(--border)";
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+              )}
               <button
                 onClick={handleDeleteClick}
                 title="Delete"
@@ -1565,6 +2047,194 @@ function SessionItem({
                   borderRadius: 7, color: "var(--text-muted)",
                   cursor: "pointer", flexShrink: 0,
                   transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
+                  e.currentTarget.style.color = "#ef4444";
+                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                  e.currentTarget.style.borderColor = "var(--border)";
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6" />
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ArchivedSessionItem — renders a muted archived session row
+ * with Unarchive and Delete actions on hover.
+ */
+function ArchivedSessionItem({
+  session,
+  onSelect,
+  onUnarchive,
+  onDelete,
+}: {
+  session: SessionInfo;
+  onSelect: () => void;
+  onUnarchive: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const title = session.name || session.firstMessage.slice(0, 50) || session.id.slice(0, 12);
+
+  const handleUnarchiveClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onUnarchive(session.id);
+  }, [session.id, onUnarchive]);
+
+  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDelete(true);
+  }, []);
+
+  const handleDeleteConfirm = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDelete(false);
+    setDeleting(true);
+    try {
+      fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" })
+        .then(() => onDelete(session.id))
+        .catch(() => setDeleting(false));
+    } catch {
+      setDeleting(false);
+    }
+  }, [session.id, onDelete]);
+
+  const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDelete(false);
+  }, []);
+
+  const ITEM_HEIGHT = 54;
+
+  return (
+    <div
+      onClick={confirmDelete ? undefined : onSelect}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        height: ITEM_HEIGHT,
+        display: "flex",
+        alignItems: "center",
+        paddingLeft: 14,
+        paddingRight: 8,
+        cursor: confirmDelete ? "default" : "pointer",
+        background: confirmDelete
+          ? "rgba(239,68,68,0.06)"
+          : hovered ? "var(--bg-hover)" : "transparent",
+        borderLeft: confirmDelete ? "2px solid #ef4444" : "2px solid transparent",
+        opacity: deleting ? 0.5 : 1,
+        gap: 6,
+        overflow: "hidden",
+      }}
+    >
+      {confirmDelete ? (
+        <>
+          <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            Delete <span style={{ fontWeight: 600 }}>&ldquo;{title.slice(0, 22)}{title.length > 22 ? "…" : ""}&rdquo;</span>?
+          </div>
+          <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+            <button onClick={handleDeleteConfirm} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, height: 30, padding: "0 11px", background: "#ef4444", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+              Delete
+            </button>
+            <button onClick={handleDeleteCancel} style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 30, padding: "0 11px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 12, fontWeight: 500, whiteSpace: "nowrap" }}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          <div style={{ flex: 1, minWidth: 0, fontStyle: "italic" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 400,
+                  lineHeight: 1.4,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: "var(--text-dim)",
+                  minWidth: 0,
+                }}
+                title={title}
+              >
+                {title}
+              </div>
+            </div>
+            <div style={{ marginTop: 2, display: "flex", gap: 8, color: "var(--text-dim)", fontSize: 11 }}>
+              <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
+              <span>{session.messageCount} msgs</span>
+            </div>
+          </div>
+          {hovered && (
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <button
+                onClick={handleUnarchiveClick}
+                title="Unarchive"
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  gap: 4, height: 30, padding: "0 10px",
+                  background: "var(--bg-hover)", border: "1px solid var(--border)",
+                  borderRadius: 7, color: "var(--text-muted)",
+                  cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(37,99,235,0.08)";
+                  e.currentTarget.style.color = "var(--accent)";
+                  e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                  e.currentTarget.style.borderColor = "var(--border)";
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                恢复
+              </button>
+              <button
+                onClick={handleDeleteClick}
+                title="Delete"
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 32, height: 32, padding: 0,
+                  background: "var(--bg-hover)", border: "1px solid var(--border)",
+                  borderRadius: 7, color: "var(--text-muted)",
+                  cursor: "pointer", flexShrink: 0,
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "rgba(239,68,68,0.08)";

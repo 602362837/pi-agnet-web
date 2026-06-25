@@ -4,8 +4,8 @@ API routes live under `app/api/`. When adding, removing, or changing routes, upd
 
 | Route | Methods | Purpose |
 | --- | --- | --- |
-| `sessions/` | GET | List sessions grouped by cwd. |
-| `sessions/[id]/` | GET/PATCH/DELETE | Read session detail, rename, delete. |
+| `sessions/` | GET | List sessions grouped by cwd (includes `archivedCwds` and `archivedCounts`). |
+| `sessions/[id]/` | GET/PATCH/DELETE | Read session detail, rename, delete. Returns `archived: true` for archived sessions. |
 | `sessions/[id]/context/` | GET | Get context for a specific `leafId`. |
 | `sessions/[id]/export/` | GET | Export session as Markdown. |
 | `sessions/new/` | 410 | Deprecated route kept for compatibility. |
@@ -24,6 +24,10 @@ API routes live under `app/api/`. When adding, removing, or changing routes, upd
 | `commands/` | GET | List slash commands from skills for a cwd. |
 | `cwd/validate/` | POST | Validate a candidate workspace path. |
 | `git/worktrees/` | GET/POST/DELETE | Inspect, create, and remove Git worktrees from the selected cwd; removal also deletes sessions for that worktree cwd. |
+| `sessions/archive/` | POST | Archive one or more sessions (moves to `sessions-archive/`). |
+| `sessions/unarchive/` | POST | Unarchive one or more sessions (moves back to `sessions/`). |
+| `sessions/archive-all/` | POST | Archive all sessions for a cwd. |
+| `sessions/archived/` | GET | List archived sessions for a cwd. |
 | `git/worktrees/archive/` | POST | Squash, push, merge, and remove a Git worktree after user risk confirmation; archive also deletes sessions for that worktree cwd. |
 | `git/info/` | GET | Return best-effort Git branch/worktree metadata for a cwd. |
 | `web-config/` | GET/PUT | Read/write `~/.pi/agent/pi-web.json`. |

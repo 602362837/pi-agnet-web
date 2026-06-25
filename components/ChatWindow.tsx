@@ -170,7 +170,35 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
 
-  const chatInputElement = (
+  const isArchived = !!session?.archived;
+
+  const archivedBannerElement = isArchived ? (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      padding: "8px 14px",
+      background: "rgba(234,179,8,0.08)",
+      borderBottom: "1px solid rgba(234,179,8,0.2)",
+      color: "var(--text-muted)",
+      fontSize: 12,
+      flexShrink: 0,
+    }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+      <span>此会话已归档。取消归档以继续对话。</span>
+    </div>
+  ) : null;
+
+  const chatInputElement = isArchived ? (
+    <div style={{ padding: "12px 14px", textAlign: "center", color: "var(--text-dim)", fontSize: 12, flexShrink: 0 }}>
+      已归档的会话不可发送新消息。
+    </div>
+  ) : (
     <ChatInput
       ref={chatInputRef}
       onSend={handleSend}
@@ -223,6 +251,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {archivedBannerElement}
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]">
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

@@ -5,7 +5,7 @@ Shared logic lives under `lib/`. Prefer adding behavior here when it is used by 
 | File | Purpose |
 | --- | --- |
 | `lib/rpc-manager.ts` | `AgentSessionWrapper`, global registry, `startRpcSession()`, cwd-scoped session cleanup, lifecycle handling. |
-| `lib/session-reader.ts` | Parse `.jsonl` session files, resolve session paths, prune/delete sessions for removed WorkTree cwd paths, read model/default config. |
+| `lib/session-reader.ts` | Parse `.jsonl` session files, resolve session paths, prune/delete sessions for removed WorkTree cwd paths, read model/default config. Archive helpers: `getSessionsArchiveDir()`, `archiveSessionFile()`, `unarchiveSessionFile()`, `scanArchivedCwds()`, `listArchivedSessionsForCwd()`, `resolveArchivedSessionPath()`. |
 | `lib/types.ts` | Shared TypeScript types for messages, sessions, and API payloads. |
 | `lib/pi-types.ts` | `AgentSessionLike` wrapper interface expected by hooks/components. |
 | `lib/normalize.ts` | Normalize pi tool-call fields to web UI shape. |

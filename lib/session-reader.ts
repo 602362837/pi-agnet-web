@@ -1,6 +1,6 @@
 import { SessionManager, buildSessionContext as piBuildSessionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { existsSync, rmdirSync, unlinkSync } from "fs";
-import { dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import type { SessionEntry, SessionInfo, SessionContext, SessionTreeNode, AssistantMessage } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
@@ -154,15 +154,6 @@ function getPathCache(): Map<string, string> {
   return globalThis.__piSessionPathCache;
 }
 
-export async function resolveSessionPath(sessionId: string): Promise<string | null> {
-  const cached = getPathCache().get(sessionId);
-  if (cached) return cached;
-
-  // Cache miss: scan all sessions to populate cache, then retry
-  await listAllSessions();
-  return getPathCache().get(sessionId) ?? null;
-}
-
 export function cacheSessionPath(sessionId: string, filePath: string): void {
   getPathCache().set(sessionId, filePath);
 }
@@ -295,6 +286,225 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
 export function getLeafId(entries: SessionEntry[]): string | null {
   if (entries.length === 0) return null;
   return entries[entries.length - 1].id;
+}
+
+// ============================================================================
+// Archive helpers: move sessions between sessions/ and sessions-archive/
+// ============================================================================
+
+export function getSessionsArchiveDir(): string {
+  return `${getAgentDir()}/sessions-archive`;
+}
+
+/**
+ * Move a session file from sessions/ to sessions-archive/.
+ * Returns the new archive path.
+ */
+export function archiveSessionFile(sessionPath: string): string {
+  const target = sessionPath.replace("/sessions/", "/sessions-archive/");
+  mkdirSync(dirname(target), { recursive: true });
+  renameSync(sessionPath, target);
+  // Update parentSession refs in sibling files
+  updateParentSessionRefs(dirname(sessionPath), sessionPath, target);
+  return target;
+}
+
+/**
+ * Move a session file from sessions-archive/ back to sessions/.
+ * Returns the new active path.
+ */
+export function unarchiveSessionFile(archivePath: string): string {
+  const target = archivePath.replace("/sessions-archive/", "/sessions/");
+  mkdirSync(dirname(target), { recursive: true });
+  renameSync(archivePath, target);
+  // Update parentSession refs in sibling files
+  updateParentSessionRefs(dirname(archivePath), archivePath, target);
+  return target;
+}
+
+/**
+ * Scan sibling files in a directory and update their parentSession header
+ * if it points to oldPath → point to newPath instead.
+ */
+function updateParentSessionRefs(dirPath: string, oldPath: string, newPath: string): void {
+  if (oldPath === newPath) return;
+  try {
+    const files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+    for (const file of files) {
+      const filePath = join(dirPath, file);
+      if (filePath === oldPath || filePath === newPath) continue;
+      try {
+        const content = readFileSync(filePath, "utf8");
+        const lines = content.split("\n");
+        const header = JSON.parse(lines[0]) as { type?: string; parentSession?: string };
+        if (header.type === "session" && header.parentSession === oldPath) {
+          header.parentSession = newPath;
+          lines[0] = JSON.stringify(header);
+          writeFileSync(filePath, lines.join("\n"));
+        }
+      } catch {
+        // skip malformed files
+      }
+    }
+  } catch {
+    // skip if dir unreadable
+  }
+}
+
+/**
+ * Scan the archive directory and return which cwds have archived sessions.
+ * Reads the first session file's header to extract the actual cwd path.
+ */
+export function scanArchivedCwds(): { cwds: string[]; counts: Record<string, number> } {
+  const archiveDir = getSessionsArchiveDir();
+  const cwds: string[] = [];
+  const counts: Record<string, number> = {};
+  if (!existsSync(archiveDir)) return { cwds, counts };
+
+  const entries = readdirSync(archiveDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dirPath = join(archiveDir, entry.name);
+    const jsonlFiles = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+    if (jsonlFiles.length === 0) continue;
+    // Read first session file to extract cwd from header
+    try {
+      const firstLine = readFileSync(join(dirPath, jsonlFiles[0]), "utf8").split("\n")[0];
+      const header = JSON.parse(firstLine) as { type?: string; cwd?: string };
+      if (header.type === "session" && header.cwd) {
+        const cwd = canonicalizeCwd(header.cwd);
+        if (!cwds.includes(cwd)) cwds.push(cwd);
+        counts[cwd] = (counts[cwd] ?? 0) + jsonlFiles.length;
+      }
+    } catch {
+      // skip malformed files
+    }
+  }
+  return { cwds, counts };
+}
+
+/**
+ * List archived sessions for a specific cwd.
+ * Parses JSONL files in the archive directory matching the given cwd.
+ * Uses SessionManager.open() for efficient metadata extraction.
+ */
+export async function listArchivedSessionsForCwd(cwd: string): Promise<SessionInfo[]> {
+  const archiveDir = getSessionsArchiveDir();
+  if (!existsSync(archiveDir)) return [];
+
+  const targets = cwdKeys(cwd);
+  const cache = getPathCache();
+  const sessions: SessionInfo[] = [];
+
+  const dirs = readdirSync(archiveDir, { withFileTypes: true });
+  for (const dir of dirs) {
+    if (!dir.isDirectory()) continue;
+    const dirPath = join(archiveDir, dir.name);
+    const jsonlFiles = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+
+    for (const file of jsonlFiles) {
+      const filePath = join(dirPath, file);
+      try {
+        // Use SessionManager for header + entry parsing. Match by header cwd instead
+        // of archive directory name because historic sessions may use cwd aliases.
+        const sm = SessionManager.open(filePath);
+        const header = sm.getHeader();
+        if (!header?.id || !cwdMatchesAny(header.cwd, targets)) continue;
+
+        const sessionCwd = header.cwd ? canonicalizeCwd(header.cwd) : cwd;
+        // Cache the path so resolveSessionPath can find it
+        cache.set(header.id, filePath);
+
+        const entries = sm.getEntries();
+        let messageCount = 0;
+        let firstMessage = "(no messages)";
+        for (const entry of entries) {
+          if (entry.type === "message") {
+            messageCount++;
+            if (messageCount === 1) {
+              const msg = entry as unknown as { message?: { content?: unknown } };
+              const content = msg.message?.content;
+              if (typeof content === "string") {
+                firstMessage = content.slice(0, 100);
+              } else if (Array.isArray(content)) {
+                const textBlock = content.find((b: { type: string }) => b.type === "text");
+                if (textBlock) firstMessage = (textBlock as { text: string }).text.slice(0, 100);
+              }
+            }
+          }
+        }
+
+        // Get modified time from file system
+        let modified = header.timestamp ?? new Date().toISOString();
+        try {
+          modified = statSync(filePath).mtime.toISOString();
+        } catch {
+          // use header timestamp
+        }
+
+        sessions.push({
+          path: filePath,
+          id: header.id,
+          cwd: sessionCwd,
+          name: sm.getSessionName(),
+          created: header.timestamp ?? modified,
+          modified,
+          messageCount,
+          firstMessage: firstMessage || "(no messages)",
+          archived: true,
+        });
+      } catch {
+        // skip malformed files
+      }
+    }
+  }
+
+  return sessions.sort((a, b) => b.modified.localeCompare(a.modified));
+}
+
+/**
+ * Find an archived session by scanning the sessions-archive/ directory tree.
+ */
+export function resolveArchivedSessionPath(sessionId: string): string | null {
+  const archiveDir = getSessionsArchiveDir();
+  if (!existsSync(archiveDir)) return null;
+
+  const cache = getPathCache();
+  // Check cache first
+  const cached = cache.get(sessionId);
+  if (cached && cached.includes("sessions-archive")) return cached;
+
+  // Scan archive dirs for the session file
+  const entries = readdirSync(archiveDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dirPath = join(archiveDir, entry.name);
+    const files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+    for (const file of files) {
+      if (file.includes(sessionId)) {
+        const fullPath = join(dirPath, file);
+        cache.set(sessionId, fullPath);
+        return fullPath;
+      }
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Extend resolveSessionPath to also check the archive directory
+// ---------------------------------------------------------------------------
+export async function resolveSessionPath(sessionId: string): Promise<string | null> {
+  const cached = getPathCache().get(sessionId);
+  if (cached) return cached;
+
+  // Cache miss: scan all active sessions to populate cache, then retry
+  await listAllSessions();
+  const cachedAfter = getPathCache().get(sessionId);
+  if (cachedAfter) return cachedAfter;
+
+  // Not found in active sessions — check archive
+  return resolveArchivedSessionPath(sessionId);
 }
 
 

@@ -47,6 +47,18 @@ Browser                Next.js Server              AgentSession (in-process)
 - Deleting or archiving a linked Git WorkTree also deletes session JSONL files whose `cwd` points at that WorkTree; session listing also prunes stale missing `*.worktrees/*` cwd sessions left by older versions.
 - Orphaned sessions whose first line cannot be parsed as a valid header are marked `orphaned: true` and displayed as incomplete, not clickable.
 
+### Archive path
+
+Archived sessions are stored at:
+
+```text
+~/.pi/agent/sessions-archive/<encoded-cwd>/<timestamp>_<uuid>.jsonl
+```
+
+Archive/unarchive is a pure file move (`renameSync`) between `sessions/` and `sessions-archive/`. The session JSONL content is never modified. Active RPC sessions are destroyed before the file is moved.
+
+The archive directory is scanned separately from `SessionManager.listAll()` (which only scans `sessions/`). Project visibility is preserved by returning `archivedCwds` and `archivedCounts` from `GET /api/sessions`, allowing the CWD picker to include projects that have only archived sessions.
+
 ### Tool calls and events
 
 - Pi stores tool calls as `{type:"toolCall", id, name, arguments}`.

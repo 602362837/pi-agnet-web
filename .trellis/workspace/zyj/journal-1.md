@@ -276,3 +276,36 @@ Implemented ChatGPT Plus/Pro saved-account management, activation, live auth rel
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Session archive feature
+
+**Date**: 2026-06-25
+**Task**: Session archive feature
+**Branch**: `feat/session-archive`
+
+### Summary
+
+Implemented session archiving across backend APIs, session archive storage, sidebar archive UI, batch/archive-all flows, archived read-only viewing, docs, validation, and pushed feat/session-archive.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf31191` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
