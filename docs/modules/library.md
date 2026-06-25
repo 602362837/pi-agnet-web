@@ -4,7 +4,7 @@ Shared logic lives under `lib/`. Prefer adding behavior here when it is used by 
 
 | File | Purpose |
 | --- | --- |
-| `lib/rpc-manager.ts` | `AgentSessionWrapper`, global registry, `startRpcSession()`, lifecycle handling. |
+| `lib/rpc-manager.ts` | `AgentSessionWrapper`, global registry, `startRpcSession()`, cwd-scoped session cleanup, lifecycle handling. |
 | `lib/session-reader.ts` | Parse `.jsonl` session files, resolve session paths, read model/default config. |
 | `lib/types.ts` | Shared TypeScript types for messages, sessions, and API payloads. |
 | `lib/pi-types.ts` | `AgentSessionLike` wrapper interface expected by hooks/components. |
@@ -12,7 +12,7 @@ Shared logic lives under `lib/`. Prefer adding behavior here when it is used by 
 | `lib/agent-client.ts` | Client-side helper for `POST /api/agent/[id]`. |
 | `lib/file-paths.ts` | Path normalization utilities for file viewer APIs. |
 | `lib/cwd.ts` | Cwd validation and normalization helpers. |
-| `lib/git-worktree.ts` | Git worktree creation helpers. |
+| `lib/git-worktree.ts` | Git worktree creation, status, archive, and removal helpers. |
 | `lib/deepseek-balance.ts` | Query DeepSeek account balance. |
 | `lib/subscription-quota.ts` | Query OpenAI Codex subscription quota. |
 | `lib/npx.ts` | Cross-platform `npx` wrapper that avoids shell quoting issues. |

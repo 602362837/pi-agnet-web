@@ -1,4 +1,5 @@
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import { resolve } from "path";
 import { cacheSessionPath } from "./session-reader";
 import type { AgentSessionLike, ToolInfo } from "./pi-types";
 
@@ -25,7 +26,7 @@ export class AgentSessionWrapper {
   private onDestroyCallback: (() => void) | null = null;
   private _alive = true;
 
-  constructor(public readonly inner: AgentSessionLike) {}
+  constructor(public readonly inner: AgentSessionLike, public readonly cwd: string) {}
 
   get sessionId(): string {
     return this.inner.sessionId;
@@ -265,6 +266,17 @@ export function getRpcSession(sessionId: string): AgentSessionWrapper | undefine
   return getRegistry().get(sessionId);
 }
 
+export function destroyRpcSessionsForCwd(cwd: string): string[] {
+  const target = resolve(cwd);
+  const destroyed: string[] = [];
+  for (const [sessionId, wrapper] of getRegistry()) {
+    if (resolve(wrapper.cwd) !== target) continue;
+    wrapper.destroy();
+    destroyed.push(sessionId);
+  }
+  return destroyed;
+}
+
 /**
  * Get or create an AgentSession for the given session.
  * For new sessions (sessionFile === ""), pi generates its own id.
@@ -316,7 +328,7 @@ export async function startRpcSession(
       inner.agent.state.systemPrompt = "";
     }
 
-    const wrapper = new AgentSessionWrapper(inner);
+    const wrapper = new AgentSessionWrapper(inner, cwd);
     wrapper.start();
 
     const realSessionId = inner.sessionId as string;
