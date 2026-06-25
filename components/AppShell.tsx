@@ -11,6 +11,7 @@ import { SkillsConfig } from "./SkillsConfig";
 import { UsageStatsModal } from "./UsageStatsModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
+import { getFileName } from "@/lib/file-paths";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 
@@ -232,6 +233,18 @@ export function AppShell() {
   const showPlaceholder = initialSessionRestored && !showChat;
 
   const activeFileTab = fileTabs.find((t) => t.id === activeFileTabId) ?? null;
+  const activeTitleCwd = selectedSession?.cwd || newSessionCwd || activeCwd;
+
+  useEffect(() => {
+    const appTitle = "Pi Agent Web";
+    if (!activeTitleCwd) {
+      document.title = appTitle;
+      return;
+    }
+
+    const projectName = getFileName(activeTitleCwd);
+    document.title = projectName ? `${projectName} · ${appTitle}` : appTitle;
+  }, [activeTitleCwd]);
 
   const sidebarContent = (
     <>
