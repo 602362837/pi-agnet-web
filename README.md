@@ -1,78 +1,90 @@
 # pi-web
 
-[pi 编程智能体](https://github.com/badlogic/pi-mono) 的网页界面。在浏览器中浏览会话、与智能体对话、分叉对话、切换消息分支。
+`pi-web` 是面向 `pi` 编程智能体的 Web 工作台。它把本地会话、实时对话、分支切换、模型配置、文件浏览和 WorkTree 管理集中到浏览器中，适合在桌面或服务器环境中长期运行。
+
+本仓库最初源自上游项目，但当前已按自身需求持续演进；使用方式也以源码构建和本地部署为主，不再把 npm 发布包作为默认安装入口。
+
+## 核心能力
+
+- **会话浏览器** — 按工作目录分组展示本地 `pi` 会话，快速回到历史上下文。
+- **实时智能体对话** — 通过 SSE 流式展示智能体输出，支持运行中引导、完成后追加消息。
+- **会话分叉与分支导航** — 从任意用户消息创建新会话，或在同一会话内回退节点继续探索。
+- **模型与工具配置** — 在对话中切换模型、调整思考等级、配置工具预设和可用模型。
+- **文件与 Git 工作区辅助** — 在侧边栏浏览当前工作目录文件，并支持创建 Git worktree。
+- **长会话管理** — 支持压缩会话摘要，降低长上下文继续工作的成本。
 
 ## 快速开始
 
-**无需安装，直接运行：**
+本项目建议从源码安装依赖并运行开发服务器：
 
 ```bash
-npx @agegr/pi-web@latest
-```
-
-**或全局安装后使用：**
-
-```bash
-npm install -g @agegr/pi-web
-pi-web
+git clone <repo-url>
+cd pi-agnet-web
+npm install
+npm run dev
 ```
 
 启动后打开 [http://localhost:30141](http://localhost:30141)。
 
-**可选参数：**
+## 生产运行
+
+构建并启动生产服务：
 
 ```bash
-pi-web --port 8080               # 自定义端口
-pi-web --hostname 127.0.0.1      # 仅本机访问
-pi-web -p 8080 -H 127.0.0.1     # 组合使用
-
-PORT=8080 pi-web                 # 也支持环境变量
+npm run build
+npm run start
 ```
 
-## 功能介绍
+默认端口是 `30141`。如需调整监听地址或端口：
 
-- **会话浏览器** — 按工作目录分组展示所有 pi 会话
-- **实时对话** — 通过 SSE 流式输出与智能体实时交互
-- **会话分叉** — 从任意用户消息创建独立的新会话分支
-- **会话内分支** — 回退到任意节点继续对话，在同一文件内创建分支
-- **分支导航器** — 可视化切换同一会话内的各个分支
-- **模型切换** — 对话中途随时切换模型
-- **工具面板** — 控制智能体可使用的工具
-- **压缩会话** — 对长会话进行摘要，节省上下文窗口
-- **引导 / 追加** — 打断正在运行的智能体，或在其完成后追加消息
+```bash
+npm run start -- --port 8080
+npm run start -- --hostname 127.0.0.1
+PORT=8080 npm run start
+```
 
-## 注意事项
+> 请使用 `npm run build` 进行生产构建；不要直接运行 `next build`，构建脚本包含项目需要的环境处理。
 
-- **数据目录** — 默认读取 `~/.pi/agent/sessions` 下的会话文件。可通过环境变量 `PI_CODING_AGENT_DIR` 指定其他目录。
-- **模型配置** — 从智能体数据目录下的 `models.json` 读取可用模型，可在侧边栏的「Models」面板中编辑。
-- **Web 配置** — 可在侧边栏底部「Settings」中动态配置 New WorkTree 默认行为，配置保存到智能体数据目录下的 `pi-web.json`。
-- **文件浏览** — 侧边栏内置文件浏览器，可在标签页中查看当前工作目录下的文件。
+## 数据与配置
+
+`pi-web` 默认读取 `~/.pi/agent/` 下的智能体数据。可通过 `PI_CODING_AGENT_DIR` 指向其他数据目录。
+
+| 路径 | 用途 |
+| --- | --- |
+| `sessions/` | 会话 JSONL 文件，按工作目录归档。 |
+| `models.json` | 模型提供商和模型列表配置。 |
+| `settings.json` | `pi` 智能体设置，包括默认模型。 |
+| `pi-web.json` | Web UI 设置，例如 New WorkTree 默认行为。 |
+
+会话文件路径格式：
+
+```text
+~/.pi/agent/sessions/<编码后的工作目录>/<时间戳>_<uuid>.jsonl
+```
 
 ## 开发
 
+常用命令：
+
 ```bash
 npm install
-npm run dev   # 端口 30141
+npm run dev
+npm run lint
+node_modules/.bin/tsc --noEmit
 ```
 
-## 项目结构
+项目结构概览：
 
-```
+```text
 app/
-  api/
-    sessions/      # 读写会话文件
-    agent/         # 发送命令、SSE 事件流
-    files/         # 文件内容读取
-    git/worktrees/ # 创建 Git worktree
-    web-config/    # 读写 pi-web.json Web 配置
-    models/        # 可用模型列表与默认模型
-    models-config/ # 读写 models.json
-components/        # UI 组件
-lib/
-  session-reader.ts  # 解析 .jsonl 会话文件
-  rpc-manager.ts     # 管理 AgentSession 生命周期
-  normalize.ts       # 规范化 toolCall 字段名
-  types.ts
+  api/              # 会话、智能体、文件、Git、模型、配置等 API 路由
+components/         # 浏览器端 UI 组件
+hooks/              # 会话状态、主题、拖拽、音频等 React hooks
+lib/                # 会话解析、RPC 生命周期、工具调用规范化等共享逻辑
+scripts/            # 构建和运维辅助脚本
+bin/                # pi-web 命令入口，保留用于本地/发布场景
+public/             # 静态资源
+docs/               # 架构、模块、部署和运维文档
 ```
 
-会话文件存储路径：`~/.pi/agent/sessions/<编码后的工作目录>/<时间戳>_<uuid>.jsonl`
+更多运行与部署细节见 [`docs/deployment/README.md`](docs/deployment/README.md)。

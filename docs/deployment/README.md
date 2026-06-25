@@ -40,13 +40,13 @@ pm2 start ecosystem.config.cjs
 
 Default proxy is `http://127.0.0.1:7897`; override with `PROXY_URL` or `SOCKS_PROXY_URL` where supported.
 
-## npm Package
+## Source Build
 
-- Package: `@agegr/pi-web`
-- Binary: `pi-web` from `bin/pi-web.js`
-- Run without install: `npx @agegr/pi-web@latest`
-- CLI supports `--port`, `--hostname`, and `PORT` env var.
-- Package files are controlled by `package.json` `files`.
+- Clone the repository and install dependencies with `npm install`.
+- Build locally with `npm run build`.
+- Run the production server with `npm run start`.
+- Use `npm run dev` during development.
+- CLI options are passed through `npm run start -- --port 8080` and `npm run start -- --hostname 127.0.0.1`; `PORT` is also supported.
 
 ## Data and Configuration
 
