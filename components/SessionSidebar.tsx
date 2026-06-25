@@ -68,7 +68,7 @@ function WorktreeBadge({ worktree }: { worktree?: WorktreeInfo }) {
   if (!worktree) return null;
   return (
     <span
-      title={worktree.branch ? `Git worktree: ${worktree.branch}` : "Git worktree"}
+      title={worktree.branch ? `Git 工作树: ${worktree.branch}` : "Git 工作树"}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -102,6 +102,34 @@ interface WorktreeCreateResponse {
   branchName?: string;
   mainWorktreePath?: string;
   mainWorktreeBranch?: string;
+}
+
+interface WorktreeActionResponse {
+  success?: boolean;
+  error?: string;
+  cwd?: string;
+  fallbackCwd?: string;
+  status?: {
+    dirty?: boolean;
+    dirtySummary?: string[];
+  };
+}
+
+interface WorktreeContextMenuState {
+  x: number;
+  y: number;
+  cwd: string;
+  worktree: WorktreeInfo;
+}
+
+interface WorktreeActionState {
+  kind: "delete" | "archive";
+  cwd: string;
+  worktree: WorktreeInfo;
+  force: boolean;
+  busy: boolean;
+  error: string | null;
+  dirtySummary?: string[];
 }
 
 interface CwdPickerRow {
@@ -277,6 +305,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [creatingWorktree, setCreatingWorktree] = useState(false);
   const [worktreeError, setWorktreeError] = useState<string | null>(null);
   const [ephemeralWorktrees, setEphemeralWorktrees] = useState<Record<string, WorktreeInfo>>({});
+  const [worktreeContextMenu, setWorktreeContextMenu] = useState<WorktreeContextMenuState | null>(null);
+  const [worktreeAction, setWorktreeAction] = useState<WorktreeActionState | null>(null);
+  const [removedWorktreeCwds, setRemovedWorktreeCwds] = useState<string[]>([]);
   const [selectedCwdGit, setSelectedCwdGit] = useState<GitInfo | undefined>(undefined);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -409,9 +440,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, []);
 
-  // Close dropdown on outside click
+  // Close dropdown/context menu on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
+      setWorktreeContextMenu(null);
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
         setCustomPathOpen(false);
@@ -453,6 +485,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         repoRoot: data.cwd,
       };
       setEphemeralWorktrees((prev) => ({ ...prev, [data.cwd!]: worktree }));
+      setRemovedWorktreeCwds((prev) => prev.filter((cwd) => cwd !== data.cwd));
       setSelectedCwd(data.cwd);
       setDropdownOpen(false);
       setCustomPathOpen(false);
@@ -467,16 +500,79 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [selectedCwd, creatingWorktree, onNewSession]);
 
-  const recentCwds = getRecentCwds(allSessions, Object.keys(ephemeralWorktrees));
+  const openWorktreeAction = useCallback((kind: "delete" | "archive", cwd: string, worktree: WorktreeInfo) => {
+    setWorktreeContextMenu(null);
+    setDropdownOpen(false);
+    setWorktreeAction({ kind, cwd, worktree, force: false, busy: false, error: null });
+  }, []);
+
+  const applyWorktreeFallback = useCallback((removedCwd: string, fallbackCwd?: string) => {
+    setEphemeralWorktrees((prev) => {
+      const next = { ...prev };
+      delete next[removedCwd];
+      return next;
+    });
+    setRemovedWorktreeCwds((prev) => prev.includes(removedCwd) ? prev : [...prev, removedCwd]);
+    if (selectedCwd === removedCwd) {
+      setSelectedCwd(fallbackCwd ?? null);
+    }
+    setExplorerKey((k) => k + 1);
+    void loadSessions(false);
+  }, [loadSessions, selectedCwd]);
+
+  const confirmWorktreeAction = useCallback(async () => {
+    if (!worktreeAction || worktreeAction.busy) return;
+    setWorktreeAction((prev) => prev ? { ...prev, busy: true, error: null, dirtySummary: undefined } : prev);
+    try {
+      const endpoint = worktreeAction.kind === "archive"
+        ? "/api/git/worktrees/archive"
+        : `/api/git/worktrees?cwd=${encodeURIComponent(worktreeAction.cwd)}&force=${worktreeAction.force ? "true" : "false"}`;
+      const res = await fetch(endpoint, {
+        method: worktreeAction.kind === "archive" ? "POST" : "DELETE",
+        headers: worktreeAction.kind === "archive" ? { "Content-Type": "application/json" } : undefined,
+        body: worktreeAction.kind === "archive"
+          ? JSON.stringify({ cwd: worktreeAction.cwd, confirmedRisk: true })
+          : undefined,
+      });
+      const data = await res.json().catch(() => ({})) as WorktreeActionResponse & { dirtySummary?: string | string[] };
+      if (!res.ok || data.error) {
+        const dirtySummary = data.status?.dirtySummary ?? (Array.isArray(data.dirtySummary) ? data.dirtySummary : typeof data.dirtySummary === "string" ? data.dirtySummary.split(/\r?\n/).filter(Boolean) : undefined);
+        setWorktreeAction((prev) => prev ? {
+          ...prev,
+          busy: false,
+          error: data.error ?? `HTTP ${res.status}`,
+          dirtySummary,
+        } : prev);
+        return;
+      }
+      applyWorktreeFallback(worktreeAction.cwd, data.fallbackCwd);
+      setWorktreeAction(null);
+    } catch (e) {
+      setWorktreeAction((prev) => prev ? { ...prev, busy: false, error: e instanceof Error ? e.message : String(e) } : prev);
+    }
+  }, [applyWorktreeFallback, worktreeAction]);
+
+  const visibleSessions = allSessions.filter((session) => !removedWorktreeCwds.includes(session.cwd));
   const worktreeByCwd = new Map<string, WorktreeInfo>();
-  for (const session of allSessions) {
+  for (const session of visibleSessions) {
     if (session.cwd && session.worktree && !worktreeByCwd.has(session.cwd)) {
       worktreeByCwd.set(session.cwd, session.worktree);
     }
   }
-  for (const [cwd, worktree] of Object.entries(ephemeralWorktrees)) worktreeByCwd.set(cwd, worktree);
+  for (const [cwd, worktree] of Object.entries(ephemeralWorktrees)) {
+    if (!removedWorktreeCwds.includes(cwd)) worktreeByCwd.set(cwd, worktree);
+  }
+  const extraCwds: string[] = [];
+  const pinCwd = (cwd: string | null | undefined) => {
+    if (!cwd || removedWorktreeCwds.includes(cwd) || extraCwds.includes(cwd)) return;
+    extraCwds.push(cwd);
+  };
+  pinCwd(selectedCwd);
+  for (const worktree of worktreeByCwd.values()) pinCwd(worktree.mainWorktreePath);
+  for (const cwd of Object.keys(ephemeralWorktrees)) pinCwd(cwd);
+  const recentCwds = getRecentCwds(visibleSessions, extraCwds);
   const selectedWorktree = selectedCwd ? worktreeByCwd.get(selectedCwd) : undefined;
-  const sessionGit = selectedCwd ? allSessions.find((s) => s.cwd === selectedCwd)?.git : undefined;
+  const sessionGit = selectedCwd ? visibleSessions.find((s) => s.cwd === selectedCwd)?.git : undefined;
   const currentGit: GitInfo | undefined = sessionGit ?? selectedCwdGit ?? (selectedWorktree ? {
     isWorktree: true,
     branch: selectedWorktree.branch,
@@ -489,8 +585,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const workspaceSubtitle = formatWorkspaceSubtitle(selectedCwd, currentGit);
   const cwdRows = buildCwdPickerRows(recentCwds, worktreeByCwd);
   const filteredSessions = selectedCwd
-    ? allSessions.filter((s) => s.cwd === selectedCwd)
-    : allSessions;
+    ? visibleSessions.filter((s) => s.cwd === selectedCwd)
+    : visibleSessions;
 
   // Build parent-child tree within the filtered set
   const sessionTree = buildSessionTree(filteredSessions);
@@ -531,7 +627,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 flexShrink: 0,
                 transition: "background 0.12s, color 0.12s, border-color 0.12s",
               }}
-              title={selectedCwd ? `New session in ${selectedCwd}` : "Select a project first"}
+              title={selectedCwd ? `在 ${selectedCwd} 新建会话` : "请先选择一个项目"}
               onMouseEnter={(e) => {
                 if (!selectedCwd) return;
                 e.currentTarget.style.background = "var(--bg-selected)";
@@ -569,7 +665,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 flexShrink: 0,
                 transition: "background 0.12s, color 0.12s, border-color 0.12s",
               }}
-              title={selectedCwd ? `Create Git worktree from ${selectedCwd}` : "Select a project first"}
+              title={selectedCwd ? `从 ${selectedCwd} 创建 Git 工作树` : "请先选择一个项目"}
               onMouseEnter={(e) => {
                 if (!selectedCwd || creatingWorktree) return;
                 e.currentTarget.style.background = "var(--bg-selected)";
@@ -588,7 +684,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 <path d="M6 15V9a3 3 0 0 1 3-3h6" />
                 <path d="M9 18h6a3 3 0 0 0 3-3V9" />
               </svg>
-              {creatingWorktree ? "Creating…" : "WorkTree"}
+              {creatingWorktree ? "创建中…" : "WorkTree"}
             </button>
             <button
               onClick={() => loadSessions(false)}
@@ -616,7 +712,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 e.currentTarget.style.color = "var(--text-muted)";
                 e.currentTarget.style.borderColor = "var(--border)";
               }}
-              title="Refresh"
+              title="刷新"
             >
               {sessionRefreshDone ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -651,6 +747,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         <div ref={dropdownRef} style={{ position: "relative" }}>
           <button
             onClick={() => setDropdownOpen((v) => !v)}
+            onContextMenu={(e) => {
+              const worktree = selectedCwd ? worktreeByCwd.get(selectedCwd) : undefined;
+              if (!selectedCwd || !worktree) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setWorktreeContextMenu({ x: e.clientX, y: e.clientY, cwd: selectedCwd, worktree });
+            }}
             style={{
               width: "100%",
               display: "flex",
@@ -676,7 +779,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 fontSize: 11,
                 color: selectedCwd ? "var(--text)" : "var(--text-dim)",
               }}
-              title={selectedCwd ?? ""}
+              title={selectedWorktree ? `${selectedCwd ?? ""}\n右键点击查看更多 WorkTree 操作` : selectedCwd ?? ""}
             >
               {selectedCwd ? shortenCwd(selectedCwd, homeDir) : (initialSessionId && !restoredRef.current ? "" : "Select project…")}
             </span>
@@ -712,6 +815,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                       setCustomPathError(null);
                       setDropdownOpen(false);
                     }}
+                    onContextMenu={(e) => {
+                      if (!row.worktree) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setWorktreeContextMenu({ x: e.clientX, y: e.clientY, cwd: row.cwd, worktree: row.worktree });
+                    }}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -730,7 +839,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
-                    title={row.cwd}
+                    title={row.worktree ? `${row.cwd}\n右键点击查看更多 WorkTree 操作` : row.cwd}
                   >
                     {selected && (
                       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -884,7 +993,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         cursor: "pointer",
                       }}
                     >
-                      Cancel
+                      取消
                     </button>
                   </div>
                 </div>
@@ -893,6 +1002,102 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           )}
         </div>
       </div>
+
+      {worktreeContextMenu && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: worktreeContextMenu.x,
+            top: worktreeContextMenu.y,
+            zIndex: 1000,
+            minWidth: 190,
+            padding: 4,
+            borderRadius: 8,
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.18)",
+          }}
+        >
+          <button
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); openWorktreeAction("archive", worktreeContextMenu.cwd, worktreeContextMenu.worktree); }}
+            style={{ width: "100%", padding: "8px 10px", background: "none", border: "none", color: "var(--text)", textAlign: "left", cursor: "pointer", fontSize: 12, borderRadius: 6 }}
+          >
+            归档 WorkTree…
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); openWorktreeAction("delete", worktreeContextMenu.cwd, worktreeContextMenu.worktree); }}
+            style={{ width: "100%", padding: "8px 10px", background: "none", border: "none", color: "#dc2626", textAlign: "left", cursor: "pointer", fontSize: 12, borderRadius: 6 }}
+          >
+            删除 WorkTree…
+          </button>
+        </div>
+      )}
+
+      {worktreeAction && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{ position: "fixed", inset: 0, zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.28)", padding: 16 }}
+        >
+          <div style={{ width: "min(520px, 100%)", borderRadius: 12, background: "var(--bg)", border: "1px solid var(--border)", boxShadow: "0 18px 50px rgba(0,0,0,0.25)", padding: 16 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
+              {worktreeAction.kind === "archive" ? "归档 WorkTree" : "删除 WorkTree"}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 12 }}>
+              <div><strong style={{ color: "var(--text)" }}>分支：</strong> {worktreeAction.worktree.branch ?? "(未知)"}</div>
+              <div style={{ overflowWrap: "anywhere" }}><strong style={{ color: "var(--text)" }}>路径：</strong> {worktreeAction.cwd}</div>
+              {worktreeAction.worktree.mainWorktreePath && (
+                <div style={{ overflowWrap: "anywhere" }}><strong style={{ color: "var(--text)" }}>回退空间：</strong> {worktreeAction.worktree.mainWorktreePath}</div>
+              )}
+            </div>
+            {worktreeAction.kind === "archive" ? (
+              <div style={{ padding: "10px 12px", borderRadius: 8, background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.25)", color: "var(--text)", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+                请确认没有未保存或未完成的工作。归档操作会 squash 该 WorkTree 分支、推送、合并到主工作树分支，然后删除本地 WorkTree。请在继续前自行运行 finish-work 等工具。
+              </div>
+            ) : (
+              <div style={{ padding: "10px 12px", borderRadius: 8, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", color: "var(--text)", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+                删除将移除本地 WorkTree。未提交的更改和未合并的提交可能会丢失。
+              </div>
+            )}
+            {worktreeAction.dirtySummary?.length ? (
+              <div style={{ maxHeight: 120, overflow: "auto", padding: 8, borderRadius: 7, background: "var(--bg-subtle)", border: "1px solid var(--border)", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", marginBottom: 10 }}>
+                {worktreeAction.dirtySummary.map((line) => <div key={line}>{line}</div>)}
+              </div>
+            ) : null}
+            {worktreeAction.error && (
+              <div style={{ padding: "8px 10px", borderRadius: 7, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", color: "#dc2626", fontSize: 12, lineHeight: 1.4, overflowWrap: "anywhere", marginBottom: 10 }}>
+                {worktreeAction.error}
+              </div>
+            )}
+            {worktreeAction.kind === "delete" && worktreeAction.dirtySummary?.length ? (
+              <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={worktreeAction.force}
+                  onChange={(e) => setWorktreeAction((prev) => prev ? { ...prev, force: e.target.checked } : prev)}
+                />
+                Git 报告有本地修改，仍然强制删除
+              </label>
+            ) : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={() => setWorktreeAction(null)}
+                disabled={worktreeAction.busy}
+                style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-muted)", cursor: worktreeAction.busy ? "not-allowed" : "pointer", fontSize: 12 }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => void confirmWorktreeAction()}
+                disabled={worktreeAction.busy || (worktreeAction.kind === "delete" && Boolean(worktreeAction.dirtySummary?.length) && !worktreeAction.force)}
+                style={{ padding: "7px 12px", borderRadius: 7, border: "none", background: worktreeAction.kind === "archive" ? "var(--accent)" : "#ef4444", color: "#fff", cursor: worktreeAction.busy ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700, opacity: worktreeAction.busy || (worktreeAction.kind === "delete" && Boolean(worktreeAction.dirtySummary?.length) && !worktreeAction.force) ? 0.65 : 1 }}
+              >
+                {worktreeAction.busy ? (worktreeAction.kind === "archive" ? "归档中…" : "删除中…") : (worktreeAction.kind === "archive" ? "归档" : "删除")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Session list */}
       <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>

@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
-import { createGitWorktree, WorktreeUserError } from "@/lib/git-worktree";
+import { NextRequest, NextResponse } from "next/server";
+import { createGitWorktree, getWorktreeStatus, removeGitWorktree, WorktreeUserError } from "@/lib/git-worktree";
 import { readPiWebConfig } from "@/lib/pi-web-config";
+import { destroyRpcSessionsForCwd } from "@/lib/rpc-manager";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,20 @@ function addAllowedRoot(cwd: string): void {
   }
   globalThis.__piAllowedRootsCache.roots.add(cwd);
   globalThis.__piAllowedRootsCache.expiresAt = Math.max(globalThis.__piAllowedRootsCache.expiresAt, now + 5_000);
+}
+
+export async function GET(req: NextRequest) {
+  const cwd = req.nextUrl.searchParams.get("cwd")?.trim();
+  if (!cwd) return NextResponse.json({ error: "cwd is required" }, { status: 400 });
+
+  try {
+    const status = await getWorktreeStatus(cwd);
+    return NextResponse.json(status);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof WorktreeUserError ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
 
 export async function POST(req: Request) {
@@ -41,6 +56,27 @@ export async function POST(req: Request) {
     });
 
     addAllowedRoot(result.cwd);
+    return NextResponse.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof WorktreeUserError ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const cwd = req.nextUrl.searchParams.get("cwd")?.trim();
+  const force = req.nextUrl.searchParams.get("force") === "true";
+  if (!cwd) return NextResponse.json({ error: "cwd is required" }, { status: 400 });
+
+  try {
+    const status = await getWorktreeStatus(cwd);
+    if (status.dirty && !force) {
+      return NextResponse.json({ error: "Worktree has uncommitted changes", status }, { status: 409 });
+    }
+
+    const destroyedSessionIds = destroyRpcSessionsForCwd(cwd);
+    const result = await removeGitWorktree(cwd, { force, destroyedSessionIds });
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
