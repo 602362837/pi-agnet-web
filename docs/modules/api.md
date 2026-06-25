@@ -23,8 +23,8 @@ API routes live under `app/api/`. When adding, removing, or changing routes, upd
 | `skills/install/` | POST | Install a skill via `npx skills add`. |
 | `commands/` | GET | List slash commands from skills for a cwd. |
 | `cwd/validate/` | POST | Validate a candidate workspace path. |
-| `git/worktrees/` | GET/POST/DELETE | Inspect, create, and remove Git worktrees from the selected cwd. |
-| `git/worktrees/archive/` | POST | Squash, push, merge, and remove a Git worktree after user risk confirmation. |
+| `git/worktrees/` | GET/POST/DELETE | Inspect, create, and remove Git worktrees from the selected cwd; removal also deletes sessions for that worktree cwd. |
+| `git/worktrees/archive/` | POST | Squash, push, merge, and remove a Git worktree after user risk confirmation; archive also deletes sessions for that worktree cwd. |
 | `git/info/` | GET | Return best-effort Git branch/worktree metadata for a cwd. |
 | `web-config/` | GET/PUT | Read/write `~/.pi/agent/pi-web.json`. |
 | `default-cwd/` | POST | Create and return `~/pi-cwd-<YYYYMMDD>`. |

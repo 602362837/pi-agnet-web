@@ -1,9 +1,11 @@
 import { SessionManager, buildSessionContext as piBuildSessionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { existsSync, rmdirSync, unlinkSync } from "fs";
+import { dirname } from "path";
 import type { SessionEntry, SessionInfo, SessionContext, SessionTreeNode, AssistantMessage } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import { getGitMetadataForCwd } from "./git-worktree";
-import { canonicalizeCwd } from "./cwd";
+import { canonicalizeCwd, expandCwd } from "./cwd";
 
 export { getAgentDir };
 
@@ -11,8 +13,83 @@ export function getSessionsDir(): string {
   return `${getAgentDir()}/sessions`;
 }
 
-export async function listAllSessions(): Promise<SessionInfo[]> {
+export interface DeletedSessionFile {
+  id: string;
+  path: string;
+  cwd: string;
+}
+
+function cwdKeys(cwd: string | undefined): Set<string> {
+  const keys = new Set<string>();
+  if (!cwd) return keys;
+  for (const candidate of [cwd, expandCwd(cwd), canonicalizeCwd(cwd)]) {
+    if (candidate) keys.add(candidate.replace(/[\\/]+$/, ""));
+  }
+  return keys;
+}
+
+function cwdMatchesAny(cwd: string | undefined, targets: Set<string>): boolean {
+  for (const key of cwdKeys(cwd)) {
+    if (targets.has(key)) return true;
+  }
+  return false;
+}
+
+function isDeletedWorktreeCwd(cwd: string | undefined): boolean {
+  const keys = cwdKeys(cwd);
+  if (keys.size === 0) return false;
+  if ([...keys].some((key) => existsSync(key))) return false;
+
+  return [...keys].some((key) => {
+    const parts = key.split(/[\\/]+/).filter(Boolean);
+    return parts.length >= 2 && parts[parts.length - 2].endsWith(".worktrees");
+  });
+}
+
+function deleteSessionFile(session: Pick<PiSessionInfo, "id" | "path" | "cwd">): DeletedSessionFile | null {
+  try {
+    unlinkSync(session.path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+  }
+
+  invalidateSessionPathCache(session.id);
+  try { rmdirSync(dirname(session.path)); } catch { /* keep non-empty session directories */ }
+  return { id: session.id, path: session.path, cwd: session.cwd ?? "" };
+}
+
+function pruneDeletedWorktreeSessions(piSessions: PiSessionInfo[]): Set<string> {
+  const prunedSessionIds = new Set<string>();
+  for (const session of piSessions) {
+    if (!isDeletedWorktreeCwd(session.cwd)) continue;
+    prunedSessionIds.add(session.id);
+    deleteSessionFile(session);
+  }
+  return prunedSessionIds;
+}
+
+export async function deleteSessionsForCwd(cwd: string, aliases: string[] = []): Promise<DeletedSessionFile[]> {
+  const targets = new Set<string>();
+  for (const candidate of [cwd, ...aliases]) {
+    for (const key of cwdKeys(candidate)) targets.add(key);
+  }
+
+  const deleted: DeletedSessionFile[] = [];
   const piSessions: PiSessionInfo[] = await SessionManager.listAll();
+  for (const session of piSessions) {
+    if (!cwdMatchesAny(session.cwd, targets)) continue;
+    const deletedSession = deleteSessionFile(session);
+    if (deletedSession) deleted.push(deletedSession);
+  }
+  return deleted;
+}
+
+export async function listAllSessions(): Promise<SessionInfo[]> {
+  let piSessions: PiSessionInfo[] = await SessionManager.listAll();
+  const prunedSessionIds = pruneDeletedWorktreeSessions(piSessions);
+  if (prunedSessionIds.size > 0) {
+    piSessions = piSessions.filter((session) => !prunedSessionIds.has(session.id));
+  }
   const pathToId = new Map<string, string>();
   for (const s of piSessions) pathToId.set(s.path, s.id);
 

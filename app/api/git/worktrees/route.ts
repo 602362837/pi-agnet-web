@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createGitWorktree, getWorktreeStatus, removeGitWorktree, WorktreeUserError } from "@/lib/git-worktree";
 import { readPiWebConfig } from "@/lib/pi-web-config";
 import { destroyRpcSessionsForCwd } from "@/lib/rpc-manager";
+import { deleteSessionsForCwd } from "@/lib/session-reader";
 
 export const dynamic = "force-dynamic";
 
@@ -75,9 +76,14 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Worktree has uncommitted changes", status }, { status: 409 });
     }
 
-    const destroyedSessionIds = destroyRpcSessionsForCwd(cwd);
+    const cleanupAliases = [status.cwd, status.worktree.repoRoot].filter((alias): alias is string => Boolean(alias));
+    const destroyedSessionIds = [...new Set([
+      ...destroyRpcSessionsForCwd(cwd),
+      ...cleanupAliases.flatMap((alias) => destroyRpcSessionsForCwd(alias)),
+    ])];
     const result = await removeGitWorktree(cwd, { force, destroyedSessionIds });
-    return NextResponse.json(result);
+    const deletedSessions = await deleteSessionsForCwd(cwd, cleanupAliases);
+    return NextResponse.json({ ...result, deletedSessionIds: deletedSessions.map((session) => session.id) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = error instanceof WorktreeUserError ? 400 : 500;

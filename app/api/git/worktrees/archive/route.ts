@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { archiveGitWorktree, MainWorktreeDirtyError, WorktreeUserError } from "@/lib/git-worktree";
+import { archiveGitWorktree, getWorktreeStatus, MainWorktreeDirtyError, WorktreeUserError } from "@/lib/git-worktree";
 import { destroyRpcSessionsForCwd } from "@/lib/rpc-manager";
+import { deleteSessionsForCwd } from "@/lib/session-reader";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +14,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "confirmedRisk is required" }, { status: 400 });
     }
 
+    const status = await getWorktreeStatus(cwd);
+    const cleanupAliases = [status.cwd, status.worktree.repoRoot].filter((alias): alias is string => Boolean(alias));
     const result = await archiveGitWorktree(cwd, {
-      beforeRemove: () => destroyRpcSessionsForCwd(cwd),
+      beforeRemove: () => [...new Set([
+        ...destroyRpcSessionsForCwd(cwd),
+        ...cleanupAliases.flatMap((alias) => destroyRpcSessionsForCwd(alias)),
+      ])],
     });
-    return NextResponse.json(result);
+    const deletedSessions = await deleteSessionsForCwd(cwd, cleanupAliases);
+    return NextResponse.json({ ...result, deletedSessionIds: deletedSessions.map((session) => session.id) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof MainWorktreeDirtyError) {

@@ -109,6 +109,7 @@ interface WorktreeActionResponse {
   error?: string;
   cwd?: string;
   fallbackCwd?: string;
+  deletedSessionIds?: string[];
   status?: {
     dirty?: boolean;
     dirtySummary?: string[];
@@ -140,20 +141,29 @@ interface CwdPickerRow {
 }
 
 function buildCwdPickerRows(recentCwds: string[], worktreeByCwd: Map<string, WorktreeInfo>): CwdPickerRow[] {
-  const rows: CwdPickerRow[] = [];
+  const projectOrder: string[] = [];
+  const syntheticParents = new Set<string>();
+  const worktreesByParent = new Map<string, Array<{ cwd: string; worktree: WorktreeInfo }>>();
   const seenProjects = new Set<string>();
   const seenWorktrees = new Set<string>();
+  const recentCwdSet = new Set(recentCwds);
 
   const pushProject = (cwd: string, syntheticParent = false) => {
-    if (seenProjects.has(cwd)) return;
+    if (seenProjects.has(cwd)) {
+      if (syntheticParent) syntheticParents.add(cwd);
+      return;
+    }
     seenProjects.add(cwd);
-    rows.push({ kind: "project", cwd, syntheticParent });
+    projectOrder.push(cwd);
+    if (syntheticParent) syntheticParents.add(cwd);
   };
 
-  const pushWorktree = (cwd: string, worktree: WorktreeInfo) => {
+  const pushWorktree = (parentCwd: string, cwd: string, worktree: WorktreeInfo) => {
     if (seenWorktrees.has(cwd)) return;
     seenWorktrees.add(cwd);
-    rows.push({ kind: "worktree", cwd, worktree });
+    const group = worktreesByParent.get(parentCwd) ?? [];
+    group.push({ cwd, worktree });
+    worktreesByParent.set(parentCwd, group);
   };
 
   for (const cwd of recentCwds) {
@@ -163,14 +173,17 @@ function buildCwdPickerRows(recentCwds: string[], worktreeByCwd: Map<string, Wor
       : null;
 
     if (worktree && parentCwd) {
-      pushProject(parentCwd, !recentCwds.includes(parentCwd));
-      pushWorktree(cwd, worktree);
+      pushProject(parentCwd, !recentCwdSet.has(parentCwd));
+      pushWorktree(parentCwd, cwd, worktree);
     } else {
       pushProject(cwd);
     }
   }
 
-  return rows;
+  return projectOrder.flatMap((cwd) => [
+    { kind: "project" as const, cwd, syntheticParent: syntheticParents.has(cwd) },
+    ...(worktreesByParent.get(cwd) ?? []).map((entry) => ({ kind: "worktree" as const, ...entry })),
+  ]);
 }
 
 interface SessionTreeNode {
@@ -546,11 +559,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         return;
       }
       applyWorktreeFallback(worktreeAction.cwd, data.fallbackCwd);
+      for (const sessionId of data.deletedSessionIds ?? []) {
+        onSessionDeleted?.(sessionId);
+      }
       setWorktreeAction(null);
     } catch (e) {
       setWorktreeAction((prev) => prev ? { ...prev, busy: false, error: e instanceof Error ? e.message : String(e) } : prev);
     }
-  }, [applyWorktreeFallback, worktreeAction]);
+  }, [applyWorktreeFallback, onSessionDeleted, worktreeAction]);
 
   const visibleSessions = allSessions.filter((session) => !removedWorktreeCwds.includes(session.cwd));
   const worktreeByCwd = new Map<string, WorktreeInfo>();

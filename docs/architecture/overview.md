@@ -21,7 +21,7 @@ Browser                Next.js Server              AgentSession (in-process)
 
 ## Key Boundaries
 
-- Session browsing is read-only: API routes read `.jsonl` files through `lib/session-reader.ts` and do not create an AgentSession.
+- Session browsing does not create an AgentSession: API routes read `.jsonl` files through `lib/session-reader.ts`; the only write side effect is pruning stale sessions whose cwd points at a deleted WorkTree.
 - Sending commands creates or reuses an in-process AgentSession through `lib/rpc-manager.ts`.
 - Client state and SSE streaming behavior are centralized in `hooks/useAgentSession.ts`.
 - File viewing and workspace metadata use explicit API routes under `app/api/files/`, `app/api/cwd/`, and `app/api/git/`.
@@ -44,6 +44,7 @@ Browser                Next.js Server              AgentSession (in-process)
 
 - `parentSession` is display metadata only and does not affect chat content.
 - Session files are fully rewritable when updating display metadata such as cascade reparenting on delete.
+- Deleting or archiving a linked Git WorkTree also deletes session JSONL files whose `cwd` points at that WorkTree; session listing also prunes stale missing `*.worktrees/*` cwd sessions left by older versions.
 - Orphaned sessions whose first line cannot be parsed as a valid header are marked `orphaned: true` and displayed as incomplete, not clickable.
 
 ### Tool calls and events

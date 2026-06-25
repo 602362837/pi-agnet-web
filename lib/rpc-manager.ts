@@ -1,6 +1,6 @@
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
-import { resolve } from "path";
 import { cacheSessionPath } from "./session-reader";
+import { canonicalizeCwd } from "./cwd";
 import type { AgentSessionLike, ToolInfo } from "./pi-types";
 
 // ============================================================================
@@ -267,10 +267,10 @@ export function getRpcSession(sessionId: string): AgentSessionWrapper | undefine
 }
 
 export function destroyRpcSessionsForCwd(cwd: string): string[] {
-  const target = resolve(cwd);
+  const target = canonicalizeCwd(cwd);
   const destroyed: string[] = [];
   for (const [sessionId, wrapper] of getRegistry()) {
-    if (resolve(wrapper.cwd) !== target) continue;
+    if (canonicalizeCwd(wrapper.cwd) !== target) continue;
     wrapper.destroy();
     destroyed.push(sessionId);
   }
