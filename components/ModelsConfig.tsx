@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { DeepSeekBalanceResult } from "@/lib/deepseek-balance";
+import { ACCOUNT_JSON_CONVERTERS, RAW_ACCOUNT_JSON_EXAMPLE, validateRawOAuthCredentialImport, type OAuthAccountImportMode } from "@/lib/oauth-account-converters";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -116,7 +117,6 @@ interface ApiKeyProvider {
   modelCount: number;
 }
 
-type OAuthAccountImportMode = "raw" | "cpa" | "sub2api";
 
 type OAuthLoginState =
   | { phase: "idle" }
@@ -978,14 +978,6 @@ function OAuthAccountsView({
   );
 }
 
-const RAW_ACCOUNT_JSON_EXAMPLE = `{
-  "type": "oauth",
-  "access": "eyJ...",
-  "refresh": "...",
-  "expires": 1780000000000,
-  "accountId": "optional-chatgpt-account-id"
-}`;
-
 function AddAccountDialog({
   provider,
   view,
@@ -1003,32 +995,73 @@ function AddAccountDialog({
 }) {
   const [mode, setMode] = useState<OAuthAccountImportMode>("raw");
   const [jsonText, setJsonText] = useState("");
+  const [convertedJsonText, setConvertedJsonText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [validationMessage, setValidationMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const converter = mode === "raw" ? undefined : ACCOUNT_JSON_CONVERTERS[mode];
+  const finalJsonText = converter ? convertedJsonText : jsonText;
 
   useEffect(() => {
     if (view === "json") setTimeout(() => textareaRef.current?.focus(), 50);
   }, [view]);
 
-  const submitRawJson = useCallback(async () => {
-    if (mode !== "raw" || submitting) return;
-    setError(null);
-
-    let credential: unknown;
+  const parseFinalCredential = useCallback((): unknown | null => {
     try {
-      credential = JSON.parse(jsonText);
+      return JSON.parse(finalJsonText);
     } catch (parseError) {
-      setError(parseError instanceof Error ? `JSON 格式无效：${parseError.message}` : "JSON 格式无效");
+      setValidationMessage({ type: "error", text: parseError instanceof Error ? `最终 JSON 格式无效：${parseError.message}` : "最终 JSON 格式无效" });
+      return null;
+    }
+  }, [finalJsonText]);
+
+  const validateFinalJson = useCallback((): unknown | null => {
+    setError(null);
+    const credential = parseFinalCredential();
+    if (!credential) return null;
+    const validationError = validateRawOAuthCredentialImport(credential);
+    if (validationError) {
+      setValidationMessage({ type: "error", text: validationError });
+      return null;
+    }
+    setValidationMessage({ type: "success", text: Array.isArray(credential) ? `验证通过：最终 JSON 可以保存 ${credential.length} 个账号。` : "验证通过：最终 JSON 可以保存为账号。" });
+    return credential;
+  }, [parseFinalCredential]);
+
+  const convertSourceJson = useCallback(() => {
+    if (!converter) return;
+    setError(null);
+    setValidationMessage(null);
+
+    let source: unknown;
+    try {
+      source = JSON.parse(jsonText);
+    } catch (parseError) {
+      setError(parseError instanceof Error ? `源 JSON 格式无效：${parseError.message}` : "源 JSON 格式无效");
       return;
     }
+
+    try {
+      const converted = converter.convert(source);
+      setConvertedJsonText(JSON.stringify(converted, null, 2));
+      setValidationMessage({ type: "success", text: "转换完成，请检查下方最终 JSON 后保存。" });
+    } catch (convertError) {
+      setError(convertError instanceof Error ? convertError.message : "转换失败");
+    }
+  }, [converter, jsonText]);
+
+  const submitRawJson = useCallback(async () => {
+    if (submitting) return;
+    const credential = validateFinalJson();
+    if (!credential) return;
 
     setSubmitting(true);
     try {
       const res = await fetch(`/api/auth/accounts/${encodeURIComponent(provider.id)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, credential }),
+        body: JSON.stringify({ mode: "raw", credential }),
       });
       const data = await res.json().catch(() => ({})) as OAuthAccountsResponse & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -1039,7 +1072,7 @@ function AddAccountDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [jsonText, mode, onClose, onImported, provider.id, submitting]);
+  }, [onClose, onImported, provider.id, submitting, validateFinalJson]);
 
   const modeButton = (value: OAuthAccountImportMode, label: string, disabled = false) => {
     const active = mode === value;
@@ -1047,7 +1080,12 @@ function AddAccountDialog({
       <button
         type="button"
         disabled={disabled || submitting}
-        onClick={() => { if (!disabled) setMode(value); }}
+        onClick={() => {
+          if (disabled) return;
+          setMode(value);
+          setError(null);
+          setValidationMessage(null);
+        }}
         style={{
           padding: "6px 9px",
           borderRadius: 6,
@@ -1098,7 +1136,7 @@ function AddAccountDialog({
             <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 14 }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                  请粘贴原始 credential 对象。必填字段为 <code style={{ fontFamily: "var(--font-mono)" }}>type</code>、<code style={{ fontFamily: "var(--font-mono)" }}>access</code>、<code style={{ fontFamily: "var(--font-mono)" }}>refresh</code> 和 <code style={{ fontFamily: "var(--font-mono)" }}>expires</code>。账号会被保存，但不会自动切换为当前激活账号。
+                  请粘贴原始 credential 对象，或由 CPA/SUB2API 转换得到的 credential 数组。必填字段为 <code style={{ fontFamily: "var(--font-mono)" }}>type</code>、<code style={{ fontFamily: "var(--font-mono)" }}>access</code>、<code style={{ fontFamily: "var(--font-mono)" }}>refresh</code> 和 <code style={{ fontFamily: "var(--font-mono)" }}>expires</code>。账号会被保存，但不会自动切换为当前激活账号。
                 </div>
                 <pre style={{ margin: 0, padding: 12, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 11, lineHeight: 1.5, overflow: "auto", fontFamily: "var(--font-mono)" }}>{RAW_ACCOUNT_JSON_EXAMPLE}</pre>
                 <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
@@ -1109,18 +1147,43 @@ function AddAccountDialog({
               <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {modeButton("raw", "原文 JSON")}
-                  {modeButton("cpa", "CPA 格式", true)}
-                  {modeButton("sub2api", "SUB2API 格式", true)}
+                  {modeButton("cpa", "CPA 格式")}
+                  {modeButton("sub2api", "SUB2API 格式")}
                 </div>
-                <textarea
-                  ref={textareaRef}
-                  value={jsonText}
-                  onChange={(e) => { setJsonText(e.target.value); setError(null); }}
-                  placeholder={RAW_ACCOUNT_JSON_EXAMPLE}
-                  spellCheck={false}
-                  style={{ minHeight: 260, resize: "vertical", padding: "9px 10px", background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 12, outline: "none", fontFamily: "var(--font-mono)", boxSizing: "border-box", lineHeight: 1.5 }}
-                />
+                {converter ? (
+                  <>
+                    <textarea
+                      ref={textareaRef}
+                      value={jsonText}
+                      onChange={(e) => { setJsonText(e.target.value); setError(null); setValidationMessage(null); }}
+                      placeholder={converter.sourcePlaceholder}
+                      spellCheck={false}
+                      style={{ minHeight: 150, resize: "vertical", padding: "9px 10px", background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 12, outline: "none", fontFamily: "var(--font-mono)", boxSizing: "border-box", lineHeight: 1.5 }}
+                    />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      <button type="button" disabled={submitting || !jsonText.trim()} onClick={convertSourceJson} style={{ padding: "6px 12px", background: !submitting && jsonText.trim() ? "var(--accent)" : "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 6, color: !submitting && jsonText.trim() ? "#fff" : "var(--text-dim)", cursor: !submitting && jsonText.trim() ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}>转换 ↓</button>
+                      <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{converter.label} → 原文 OAuth JSON</span>
+                    </div>
+                    <textarea
+                      value={convertedJsonText}
+                      onChange={(e) => { setConvertedJsonText(e.target.value); setError(null); setValidationMessage(null); }}
+                      placeholder={RAW_ACCOUNT_JSON_EXAMPLE}
+                      spellCheck={false}
+                      style={{ minHeight: 150, resize: "vertical", padding: "9px 10px", background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 12, outline: "none", fontFamily: "var(--font-mono)", boxSizing: "border-box", lineHeight: 1.5 }}
+                    />
+                  </>
+                ) : (
+                  <textarea
+                    ref={textareaRef}
+                    value={jsonText}
+                    onChange={(e) => { setJsonText(e.target.value); setError(null); setValidationMessage(null); }}
+                    placeholder={RAW_ACCOUNT_JSON_EXAMPLE}
+                    spellCheck={false}
+                    style={{ minHeight: 260, resize: "vertical", padding: "9px 10px", background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 12, outline: "none", fontFamily: "var(--font-mono)", boxSizing: "border-box", lineHeight: 1.5 }}
+                  />
+                )}
                 {error && <div style={{ fontSize: 12, color: "#f87171", lineHeight: 1.5 }}>{error}</div>}
+                {validationMessage && <div style={{ fontSize: 12, color: validationMessage.type === "success" ? "#34d399" : "#f87171", lineHeight: 1.5 }}>{validationMessage.text}</div>}
               </div>
             </div>
 
@@ -1128,7 +1191,8 @@ function AddAccountDialog({
               <button type="button" disabled={submitting} onClick={() => onViewChange("method")} style={{ padding: "6px 12px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: submitting ? "not-allowed" : "pointer", fontSize: 12 }}>返回</button>
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" disabled={submitting} onClick={onClose} style={{ padding: "6px 12px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: submitting ? "not-allowed" : "pointer", fontSize: 12 }}>取消</button>
-                <button type="button" disabled={submitting || !jsonText.trim()} onClick={submitRawJson} style={{ padding: "6px 14px", background: !submitting && jsonText.trim() ? "var(--accent)" : "var(--bg-panel)", border: "none", borderRadius: 6, color: !submitting && jsonText.trim() ? "#fff" : "var(--text-dim)", cursor: !submitting && jsonText.trim() ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}>{submitting ? "保存中…" : "保存账号"}</button>
+                <button type="button" disabled={submitting || !finalJsonText.trim()} onClick={validateFinalJson} style={{ padding: "6px 12px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: !submitting && finalJsonText.trim() ? "var(--text-muted)" : "var(--text-dim)", cursor: !submitting && finalJsonText.trim() ? "pointer" : "not-allowed", fontSize: 12 }}>验证</button>
+                <button type="button" disabled={submitting || !finalJsonText.trim()} onClick={submitRawJson} style={{ padding: "6px 14px", background: !submitting && finalJsonText.trim() ? "var(--accent)" : "var(--bg-panel)", border: "none", borderRadius: 6, color: !submitting && finalJsonText.trim() ? "#fff" : "var(--text-dim)", cursor: !submitting && finalJsonText.trim() ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}>{submitting ? "保存中…" : "保存账号"}</button>
               </div>
             </div>
           </>

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AuthStorage, getAgentDir, type OAuthCredential } from "@earendil-works/pi-coding-agent";
+import { convertOAuthAccountCredential, type OAuthAccountImportMode } from "@/lib/oauth-account-converters";
 
 export const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 
@@ -58,8 +59,6 @@ export interface OAuthAccountsList {
   activeAccountId: string | null;
   accounts: OAuthAccountSummary[];
 }
-
-export type OAuthAccountImportMode = "raw" | "cpa" | "sub2api";
 
 interface SaveAccountOptions {
   markActive?: boolean;
@@ -467,17 +466,20 @@ export async function importOAuthAccountCredential(
 ): Promise<OAuthAccountsList> {
   assertSupportedProvider(provider);
 
-  if (mode === "cpa" || mode === "sub2api") {
-    throw new OAuthAccountStoreError(`${mode.toUpperCase()} account import is not supported yet`, 501);
-  }
-  if (mode !== "raw") {
-    throw new OAuthAccountStoreError("Unsupported OAuth account import mode", 400);
-  }
-  if (!isStoredOpenAICodexCredential(credential)) {
-    throw new OAuthAccountStoreError("Expected raw OAuth credential JSON with type, access, refresh, and expires", 400);
+  let rawCredentials: Record<string, unknown>[];
+  try {
+    rawCredentials = convertOAuthAccountCredential(mode, credential);
+  } catch (error) {
+    throw new OAuthAccountStoreError(error instanceof Error ? error.message : "Invalid OAuth account credential", 400);
   }
 
-  await saveOAuthAccountCredential(provider, credential);
+  for (let index = 0; index < rawCredentials.length; index += 1) {
+    const rawCredential = rawCredentials[index];
+    if (!isStoredOpenAICodexCredential(rawCredential)) {
+      throw new OAuthAccountStoreError(`Expected OAuth credential JSON with type, access, refresh, and expires at account ${index + 1}`, 400);
+    }
+    await saveOAuthAccountCredential(provider, rawCredential);
+  }
   return listOAuthAccounts(provider);
 }
 

@@ -375,3 +375,69 @@ Added ChatGPT Plus/Pro Add Account method selection with existing Codex authoriz
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: CPA JSON conversion support
+
+**Date**: 2026-06-26
+**Task**: CPA JSON conversion support
+**Branch**: `pi/20260626-103030`
+
+### Summary
+
+Implemented CPA account JSON conversion for ChatGPT Plus/Pro import: selectable CPA mode, source-to-final two-pane converter layout, final JSON validation, and raw OAuth save path with sub2api-ready converter structure.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db6d393` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: Support SUB2API account JSON conversion
+
+**Date**: 2026-06-26
+**Task**: Support SUB2API account JSON conversion
+**Branch**: `pi/20260626-103030`
+
+### Summary
+
+Extracted OAuth account import converters into a shared library, enabled SUB2API conversion in the UI, and added backend support for raw/CPA/SUB2API imports including multi-account SUB2API exports.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `062c996` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
