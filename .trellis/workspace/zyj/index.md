@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 13
 - **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~377 | Active |
+| `journal-1.md` | ~443 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-06-26 | Support SUB2API account JSON conversion | `062c996` | `pi/20260626-103030` |
+| 12 | 2026-06-26 | CPA JSON conversion support | `db6d393` | `pi/20260626-103030` |
 | 11 | 2026-06-26 | Add ChatGPT account JSON import | `c7a1ed0` | `pi/20260626-095856` |
 | 10 | 2026-06-26 | ChatGPT account management polish | `a4ef952` | `pi/20260626-085608` |
 | 9 | 2026-06-25 | Session archive feature | `bf31191` | `feat/session-archive` |

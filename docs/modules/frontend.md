@@ -12,7 +12,7 @@
 | `components/BranchNavigator.tsx` | In-session branch switcher. |
 | `components/ChatMinimap.tsx` | Scroll minimap beside message list. |
 | `components/ToolPanel.tsx` | Tool presets and preset inference helpers. |
-| `components/ModelsConfig.tsx` | Modal for editing `models.json`, OAuth/API-key auth, and ChatGPT Plus/Pro saved-account add/import, activation, remarks, and inactive-account deletion. |
+| `components/ModelsConfig.tsx` | Modal for editing `models.json`, OAuth/API-key auth, and ChatGPT Plus/Pro saved-account add/import, activation, remarks, inactive-account deletion, and raw/CPA/SUB2API account JSON import via shared converters. |
 | `components/SkillsConfig.tsx` | Modal for browsing/installing skills. |
 | `components/SettingsConfig.tsx` | Settings modal, currently WorkTree defaults in `pi-web.json`. |
 | `components/UsageStatsModal.tsx` | Token/cost usage statistics modal. |
