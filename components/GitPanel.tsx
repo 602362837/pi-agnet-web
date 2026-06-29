@@ -56,6 +56,9 @@ export function GitPanel({ cwd, refreshKey, onDirtyChange }: Props) {
   const [graphData, setGraphData] = useState<GitGraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const fetchIdRef = useRef(0);
 
   const fetchAll = useCallback(async () => {
@@ -99,6 +102,48 @@ export function GitPanel({ cwd, refreshKey, onDirtyChange }: Props) {
     void fetchAll();
   }, [fetchAll, refreshKey]);
 
+  useEffect(() => {
+    setSelectedBranch("");
+    setSwitchError(null);
+  }, [cwd]);
+
+  useEffect(() => {
+    const branches = graphData?.branches ?? [];
+    if (branches.length === 0) {
+      setSelectedBranch("");
+      return;
+    }
+
+    setSelectedBranch((current) => {
+      if (current && branches.some((branch) => branch.name === current)) return current;
+      const nextBranch = branches.find((branch) => !branch.isCurrent && branch.name !== status?.branch);
+      return nextBranch?.name ?? branches[0]?.name ?? "";
+    });
+  }, [graphData?.branches, status?.branch]);
+
+  const handleSwitchBranch = useCallback(async () => {
+    if (!cwd || !selectedBranch || status?.isDirty || switching) return;
+
+    setSwitching(true);
+    setSwitchError(null);
+    try {
+      const res = await fetch("/api/git/switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, branch: selectedBranch }),
+      });
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok || body.error) {
+        throw new Error(body.error ?? `Switch failed with HTTP ${res.status}`);
+      }
+      await fetchAll();
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSwitching(false);
+    }
+  }, [cwd, fetchAll, selectedBranch, status?.isDirty, switching]);
+
   const sectionTitleStyle: React.CSSProperties = {
     fontSize: 10,
     fontWeight: 600,
@@ -133,6 +178,17 @@ export function GitPanel({ cwd, refreshKey, onDirtyChange }: Props) {
   }
 
   if (!status) return null;
+
+  const branchOptions = graphData?.branches ?? [];
+  const selectedIsCurrent = selectedBranch === status.branch || branchOptions.some((branch) => branch.name === selectedBranch && branch.isCurrent);
+  const canSwitchBranch = Boolean(selectedBranch) && branchOptions.length > 0 && !loading && !switching && !status.isDirty && !selectedIsCurrent;
+  const switchDisabledReason = status.isDirty
+    ? "Commit, stash, or discard local changes before switching branches."
+    : branchOptions.length === 0
+      ? "Branch list is unavailable."
+      : selectedIsCurrent
+        ? "Select a different local branch to switch."
+        : null;
 
   return (
     <div style={{ maxHeight: "min(500px, 60vh)", overflowY: "auto" }}>
@@ -208,6 +264,74 @@ export function GitPanel({ cwd, refreshKey, onDirtyChange }: Props) {
                 </span>
               )}
             </span>
+          )}
+        </div>
+
+        <div style={{ marginTop: 8, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 6 }}>
+            Switch local branch
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <select
+              value={selectedBranch}
+              onChange={(e) => {
+                setSelectedBranch(e.currentTarget.value);
+                setSwitchError(null);
+              }}
+              disabled={loading || switching || branchOptions.length === 0}
+              aria-label="Select local Git branch"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 28,
+                padding: "0 6px",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                background: "var(--bg)",
+                color: "var(--text)",
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                opacity: loading || switching || branchOptions.length === 0 ? 0.6 : 1,
+              }}
+            >
+              {branchOptions.length === 0 ? (
+                <option value="">No local branches</option>
+              ) : branchOptions.map((branch) => (
+                <option key={branch.name} value={branch.name}>
+                  {branch.isCurrent ? "✓ " : ""}{branch.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void handleSwitchBranch()}
+              disabled={!canSwitchBranch}
+              title={switchDisabledReason ?? `Switch to ${selectedBranch}`}
+              style={{
+                height: 28,
+                padding: "0 10px",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                background: canSwitchBranch ? "var(--accent)" : "var(--bg-hover)",
+                color: canSwitchBranch ? "white" : "var(--text-dim)",
+                cursor: canSwitchBranch ? "pointer" : "not-allowed",
+                fontSize: 11,
+                fontWeight: 600,
+                opacity: switching ? 0.7 : 1,
+              }}
+            >
+              {switching ? "Switching..." : "Switch"}
+            </button>
+          </div>
+          {switchDisabledReason && (
+            <div style={{ marginTop: 5, fontSize: 10, color: status.isDirty ? "#f59e0b" : "var(--text-dim)" }}>
+              {switchDisabledReason}
+            </div>
+          )}
+          {switchError && (
+            <div style={{ marginTop: 5, fontSize: 10, color: "#ef4444", whiteSpace: "pre-wrap" }}>
+              {switchError}
+            </div>
           )}
         </div>
       </div>
