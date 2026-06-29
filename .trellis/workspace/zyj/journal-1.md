@@ -808,3 +808,36 @@ Investigated Usage statistics data flow, fixed aggregation to optionally include
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: ChatGPT usage panel
+
+**Date**: 2026-06-29
+**Task**: ChatGPT usage panel
+**Branch**: `pi/20260629-152818`
+
+### Summary
+
+Added an optional ChatGPT/Codex usage panel with Settings toggle, cached active-account quota display, manual refresh, shared quota display helpers, and module documentation updates.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8cd9304` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
