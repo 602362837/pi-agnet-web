@@ -1,10 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
 export const dynamic = "force-dynamic";
+
+interface GitExecError extends Error {
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+}
 
 class GitSwitchUserError extends Error {
   constructor(message: string, public readonly status = 400) {
@@ -13,26 +18,28 @@ class GitSwitchUserError extends Error {
   }
 }
 
+function getGitErrorMessage(error: unknown): string {
+  const err = error as Partial<GitExecError>;
+  const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString();
+  const stdout = typeof err.stdout === "string" ? err.stdout : err.stdout?.toString();
+  const message = error instanceof Error ? error.message : String(error);
+  return (stderr || stdout || message || "Git command failed").trim();
+}
+
 async function git(args: string[], cwd: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("git", args, {
-      cwd,
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-    });
-    return String(stdout);
-  } catch (error) {
-    const err = error as { stderr?: string; stdout?: string; message?: string };
-    const detail = (err.stderr || err.stdout || err.message || "Git command failed").trim();
-    throw new GitSwitchUserError(detail || "Git command failed");
-  }
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+  return String(stdout);
 }
 
 async function assertGitRepository(cwd: string): Promise<void> {
   try {
     await git(["rev-parse", "--show-toplevel"], cwd);
   } catch {
-    throw new GitSwitchUserError(`Not a Git repository: ${cwd}`, 400);
+    throw new GitSwitchUserError("Not a Git repository", 400);
   }
 }
 
@@ -44,7 +51,26 @@ async function assertLocalBranchExists(cwd: string, branch: string): Promise<voi
   }
 }
 
-export async function POST(req: Request) {
+async function assertCleanWorkingTree(cwd: string): Promise<void> {
+  let dirtyOutput: string;
+  try {
+    dirtyOutput = (await git(["status", "--porcelain"], cwd)).trim();
+  } catch (error) {
+    throw new GitSwitchUserError(
+      `Unable to verify working tree cleanliness: ${getGitErrorMessage(error)}`,
+      500,
+    );
+  }
+
+  if (dirtyOutput) {
+    throw new GitSwitchUserError(
+      "Cannot switch branches while the working tree has uncommitted changes.",
+      409,
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({})) as {
       cwd?: unknown;
@@ -63,18 +89,18 @@ export async function POST(req: Request) {
 
     await assertGitRepository(cwd);
     await assertLocalBranchExists(cwd, branch);
+    await assertCleanWorkingTree(cwd);
 
-    const dirtyOutput = (await git(["status", "--porcelain"], cwd)).trim();
-    if (dirtyOutput) {
-      return NextResponse.json({
-        error: "Cannot switch branches while the working tree has uncommitted changes.",
-        dirty: true,
-        details: dirtyOutput,
-      }, { status: 409 });
+    try {
+      await git(["switch", "--", branch], cwd);
+    } catch (error) {
+      throw new GitSwitchUserError(
+        `Failed to switch to branch "${branch}": ${getGitErrorMessage(error)}`,
+        500,
+      );
     }
 
-    await git(["switch", "--", branch], cwd);
-    return NextResponse.json({ success: true, branch });
+    return NextResponse.json({ success: true, branch, switchedTo: branch });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = error instanceof GitSwitchUserError ? error.status : 500;
