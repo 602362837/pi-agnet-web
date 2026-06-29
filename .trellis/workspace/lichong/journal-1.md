@@ -5,3 +5,36 @@
 
 ---
 
+
+
+## Session 27: Git panel branch switching
+
+**Date**: 2026-06-29
+**Task**: Git panel branch switching
+**Branch**: `main`
+
+### Summary
+
+Implemented and verified safe local branch switching in the Git panel: added guarded POST /api/git/switch behavior, documented API/frontend changes, captured Git mutation-route spec guidance, then archived the Trellis task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1a2102c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
