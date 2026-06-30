@@ -31,18 +31,19 @@ Add a ChatGPT/Codex account warmup workflow so a user can intentionally trigger 
 - After each account warmup, refresh that account's quota cache when possible so reset metadata in existing account UI stays current.
 - The UI should fit the existing account-management flow and avoid exposing OAuth tokens or raw credential content.
 
-### MVP: Confirmed scope
+### Phase 1: Completed manual warmup
 
 - The first implementation includes manual selected-account warmup only.
-- Scheduled warmup management is deferred to a later iteration.
+- Manual warmup uses a fixed low-cost Codex model and refreshes quota cache afterward.
 
-### Future / advanced warmup management
+### Phase 2: Scheduled warmup management
 
 - Allow saved schedules such as daily `07:00` and `13:00`.
 - Allow choosing which saved accounts participate in scheduled warmup.
-- Persist schedule configuration in `pi-web.json` or another appropriate pi-web config location.
+- Persist schedule configuration in `pi-web.json` under the existing ChatGPT config section.
 - Keep run history separate from credentials and general config.
 - Prevent duplicate scheduled runs caused by dev hot reload or server restart.
+- Show enough schedule and recent-run status in the warmup management UI to verify automation is configured.
 
 ## Acceptance Criteria
 
@@ -56,6 +57,12 @@ Add a ChatGPT/Codex account warmup workflow so a user can intentionally trigger 
 - [ ] Existing account add/import/activate/delete/quota refresh flows continue to work.
 - [ ] Documentation route/module maps are updated if new API routes or major components are added.
 - [ ] `npm run lint` and `node_modules/.bin/tsc --noEmit` pass.
+- [ ] A user can enable scheduled warmup from the warmup management UI.
+- [ ] The user can choose saved accounts for scheduled warmup without exposing credentials.
+- [ ] The user can save daily warmup times such as `07:00` and `13:00`.
+- [ ] The schedule persists in `pi-web.json` and preserves unrelated ChatGPT settings.
+- [ ] Scheduled run history is persisted outside credentials and general config.
+- [ ] The scheduler avoids duplicate runs for the same local date/time across dev hot reload or server restart.
 
 ## Out of Scope Unless Explicitly Approved
 

@@ -1,3 +1,5 @@
+import { readOpenAICodexWarmupHistory, recordOpenAICodexWarmupRun } from "@/lib/openai-codex-warmup-history";
+import { ensureOpenAICodexWarmupScheduler } from "@/lib/openai-codex-warmup-scheduler";
 import { warmOpenAICodexAccounts } from "@/lib/openai-codex-warmup";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +21,11 @@ function normalizeAccountIds(value: unknown): string[] | null {
   return accountIds;
 }
 
+export async function GET() {
+  ensureOpenAICodexWarmupScheduler();
+  return Response.json(await readOpenAICodexWarmupHistory());
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null) as { accountIds?: unknown } | null;
   const accountIds = normalizeAccountIds(body?.accountIds);
@@ -33,5 +40,15 @@ export async function POST(req: Request) {
     return Response.json({ error: `Select at most ${MAX_WARMUP_ACCOUNTS} accounts` }, { status: 400 });
   }
 
-  return Response.json(await warmOpenAICodexAccounts(accountIds));
+  ensureOpenAICodexWarmupScheduler();
+  const startedAt = new Date().toISOString();
+  const response = await warmOpenAICodexAccounts(accountIds);
+  await recordOpenAICodexWarmupRun({
+    source: "manual",
+    startedAt,
+    completedAt: new Date().toISOString(),
+    accountIds,
+    results: response.results,
+  }).catch(() => {});
+  return Response.json(response);
 }

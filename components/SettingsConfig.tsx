@@ -311,7 +311,7 @@ function usageConfigsEqual(a: PiWebUsageConfig | null, b: PiWebUsageConfig | nul
 
 function chatGptConfigsEqual(a: PiWebChatGptConfig | null, b: PiWebChatGptConfig | null): boolean {
   if (!a || !b) return a === b;
-  return a.usagePanelEnabled === b.usagePanelEnabled;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string | null; onClose: () => void; onConfigChange?: () => void }) {
@@ -694,7 +694,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
           <div style={{ width: 150, borderRight: "1px solid var(--border)", padding: 10, background: "var(--bg-subtle)", flexShrink: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             {renderSectionButton("worktree", "WorkTree", "New WorkTree 默认配置")}
             {renderSectionButton("usage", "Usage", "Usage 统计范围")}
-            {renderSectionButton("chatgpt", "ChatGPT", "ChatGPT 用量悬浮面板")}
+            {renderSectionButton("chatgpt", "ChatGPT", "ChatGPT 用量悬浮面板与预热配置")}
             {renderSectionButton("trellis", "Trellis", "Trellis 面板开关")}
           </div>
 
@@ -777,7 +777,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                     <div>
                       <h3 style={{ margin: 0, color: "var(--text)", fontSize: 15 }}>ChatGPT</h3>
                       <p style={{ margin: "5px 0 0", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
-                        控制 ChatGPT/Codex 账号相关显示。保存到 <code style={{ fontFamily: "var(--font-mono)", color: "var(--text)", overflowWrap: "anywhere" }}>{configPath}</code>
+                        控制 ChatGPT/Codex 账号相关显示。账号预热计划在 Models 的 Warm up 弹窗中管理，并同样保存到 <code style={{ fontFamily: "var(--font-mono)", color: "var(--text)", overflowWrap: "anywhere" }}>{configPath}</code>
                         {exists ? "" : "（保存时会自动创建）"}
                       </p>
                     </div>

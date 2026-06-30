@@ -63,8 +63,15 @@ export interface PiWebUsageConfig {
   includeArchived: boolean;
 }
 
+export interface PiWebChatGptWarmupConfig {
+  enabled: boolean;
+  accountIds: string[];
+  times: string[];
+}
+
 export interface PiWebChatGptConfig {
   usagePanelEnabled: boolean;
+  warmup: PiWebChatGptWarmupConfig;
 }
 
 export interface PiWebConfig {
@@ -109,6 +116,11 @@ export const DEFAULT_PI_WEB_CONFIG: PiWebConfig = {
   },
   chatgpt: {
     usagePanelEnabled: false,
+    warmup: {
+      enabled: false,
+      accountIds: [],
+      times: ["07:00", "13:00"],
+    },
   },
   trellis: {
     enabled: false,
@@ -164,6 +176,44 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 
 function readSessionDisplay(value: unknown, fallback: "separate" | "tag"): "separate" | "tag" {
   return value === "separate" || value === "tag" ? value : fallback;
+}
+
+function normalizeDailyTime(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const normalized = item.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function readDailyTimes(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const normalized = normalizeDailyTime(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result.length > 0 ? result : fallback;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -265,6 +315,15 @@ function readTrellisSubagentsConfig(value: unknown, fallback: PiWebTrellisSubage
   };
 }
 
+function readChatGptWarmupConfig(value: unknown, fallback: PiWebChatGptWarmupConfig): PiWebChatGptWarmupConfig {
+  const root = isRecord(value) ? value : {};
+  return {
+    enabled: readBoolean(root.enabled, fallback.enabled),
+    accountIds: normalizeStringList(root.accountIds),
+    times: readDailyTimes(root.times, fallback.times),
+  };
+}
+
 function normalizePiWebConfig(raw: unknown): PiWebConfig {
   const defaults = DEFAULT_PI_WEB_CONFIG;
   const root = isRecord(raw) ? raw : {};
@@ -285,6 +344,7 @@ function normalizePiWebConfig(raw: unknown): PiWebConfig {
     },
     chatgpt: {
       usagePanelEnabled: readBoolean(chatgpt.usagePanelEnabled, defaults.chatgpt.usagePanelEnabled),
+      warmup: readChatGptWarmupConfig(chatgpt.warmup, defaults.chatgpt.warmup),
     },
     trellis: {
       enabled: readBoolean(trellis.enabled, defaults.trellis.enabled),
@@ -478,12 +538,38 @@ export function validatePiWebUsageConfig(value: unknown): PiWebUsageConfig {
   };
 }
 
+function validateDailyTimes(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) throw new PiWebConfigValidationError(`${field} must be an array`);
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const normalized = normalizeDailyTime(item);
+    if (!normalized) throw new PiWebConfigValidationError(`${field} entries must be HH:mm times`);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  if (result.length === 0) throw new PiWebConfigValidationError(`${field} must include at least one time`);
+  return result;
+}
+
+function validateChatGptWarmupConfig(value: unknown): PiWebChatGptWarmupConfig {
+  if (value === undefined) return DEFAULT_PI_WEB_CONFIG.chatgpt.warmup;
+  if (!isRecord(value)) throw new PiWebConfigValidationError("chatgpt.warmup must be an object");
+  return {
+    enabled: requireBoolean(value.enabled, "chatgpt.warmup.enabled"),
+    accountIds: normalizeStringList(value.accountIds),
+    times: validateDailyTimes(value.times, "chatgpt.warmup.times"),
+  };
+}
+
 export function validatePiWebChatGptConfig(value: unknown): PiWebChatGptConfig {
   if (!isRecord(value)) {
     throw new PiWebConfigValidationError("chatgpt config must be an object");
   }
   return {
     usagePanelEnabled: requireBoolean(value.usagePanelEnabled, "chatgpt.usagePanelEnabled"),
+    warmup: validateChatGptWarmupConfig(value.warmup),
   };
 }
 
@@ -517,13 +603,21 @@ export function writePiWebConfigPatch(patch: PiWebConfigPatch): PiWebConfigReadR
     throw new PiWebConfigValidationError("no supported config sections provided");
   }
 
-  const normalizedWorktree = hasWorktree ? validatePiWebWorktreeConfig(patch.worktree) : undefined;
-  const normalizedTrellis = hasTrellis ? validatePiWebTrellisConfig(patch.trellis) : undefined;
-  const normalizedUsage = hasUsage ? validatePiWebUsageConfig(patch.usage) : undefined;
-  const normalizedChatGpt = hasChatGpt ? validatePiWebChatGptConfig(patch.chatgpt) : undefined;
   const path = getPiWebConfigPath();
   const current = readRawConfigFile(path);
   const raw = current.parseError ? {} : current.raw;
+  const currentConfig = normalizePiWebConfig(raw);
+  const chatGptPatch = hasChatGpt ? patch.chatgpt : undefined;
+  const normalizedWorktree = hasWorktree ? validatePiWebWorktreeConfig(patch.worktree) : undefined;
+  const normalizedTrellis = hasTrellis ? validatePiWebTrellisConfig(patch.trellis) : undefined;
+  const normalizedUsage = hasUsage ? validatePiWebUsageConfig(patch.usage) : undefined;
+  const normalizedChatGpt = hasChatGpt ? validatePiWebChatGptConfig(isRecord(chatGptPatch) ? {
+    ...currentConfig.chatgpt,
+    ...chatGptPatch,
+    warmup: Object.prototype.hasOwnProperty.call(chatGptPatch, "warmup")
+      ? chatGptPatch.warmup
+      : currentConfig.chatgpt.warmup,
+  } : chatGptPatch) : undefined;
   const nextRaw: Record<string, unknown> = { ...raw };
 
   if (normalizedWorktree) {

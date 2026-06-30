@@ -4,10 +4,12 @@ import {
   readPiWebConfigForApi,
   writePiWebConfigPatch,
 } from "@/lib/pi-web-config";
+import { ensureOpenAICodexWarmupScheduler } from "@/lib/openai-codex-warmup-scheduler";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  ensureOpenAICodexWarmupScheduler();
   return NextResponse.json(readPiWebConfigForApi());
 }
 
@@ -15,6 +17,7 @@ export async function PUT(req: Request) {
   try {
     const body = await req.json().catch(() => ({})) as { worktree?: unknown; trellis?: unknown; usage?: unknown; chatgpt?: unknown };
     const result = writePiWebConfigPatch(body);
+    ensureOpenAICodexWarmupScheduler();
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
