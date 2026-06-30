@@ -205,3 +205,36 @@ Added first-class Windows Web Terminal shell support for cmd, Windows PowerShell
 ### Next Steps
 
 - None - task complete
+
+
+## Session 33: Mobile responsive adaptation
+
+**Date**: 2026-07-01
+**Task**: Mobile responsive adaptation
+**Branch**: `main`
+
+### Summary
+
+Audited existing mobile support, planned Trellis task artifacts, implemented mobile responsive improvements across the app shell, chat input/messages, side/right panels, modals, file viewer, Git/Subagents panels, and terminal fallback; validated with lint and TypeScript; committed the work.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dbe9a48` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
