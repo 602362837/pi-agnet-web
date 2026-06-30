@@ -37,6 +37,7 @@
 | `hooks/useTheme.ts` | Dark/light theme toggle with view-transition animation. |
 | `hooks/useDragDrop.ts` | Drag-and-drop image attachment handler. |
 | `hooks/useAudio.ts` | Sound toggle and completion chime playback. |
+| `hooks/useAutoScroll.ts` | Persisted chat auto-stick-to-bottom preference used by the message list and input toggle. |
 
 ## Styles
 

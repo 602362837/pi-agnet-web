@@ -41,6 +41,8 @@ interface Props {
   retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
   soundEnabled?: boolean;
   onSoundToggle?: () => void;
+  autoScrollEnabled?: boolean;
+  onAutoScrollToggle?: () => void;
 }
 
 export interface ChatInputHandle {
@@ -295,6 +297,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo,
   soundEnabled, onSoundToggle,
+  autoScrollEnabled, onAutoScrollToggle,
 }: Props, ref) {
   const [slashCommands, setSlashCommands] = useState<SlashCommandEntry[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
@@ -1544,7 +1547,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {/* spacer */}
           <div style={{ flex: 1 }} />
 
-          {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming) */}
+          {/* RIGHT: thinking + tools preset + compact + scroll/sound toggles (idle) | Stop + toggles (streaming) */}
           <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 2, marginLeft: "auto" }}>
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
@@ -1789,10 +1792,47 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             )}
 
+            {onAutoScrollToggle !== undefined && (
+              <button
+                onClick={onAutoScrollToggle}
+                title={autoScrollEnabled ? "关闭自动吸底" : "开启自动吸底"}
+                aria-label={autoScrollEnabled ? "关闭自动吸底" : "开启自动吸底"}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 32, height: 32, padding: 0,
+                  background: "none",
+                  border: "none",
+                  borderRadius: 9,
+                  color: autoScrollEnabled ? "var(--text-muted)" : "var(--text-dim)",
+                  cursor: "pointer",
+                  opacity: autoScrollEnabled ? 1 : 0.55,
+                  transition: "background 0.12s, color 0.12s, opacity 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text)";
+                  e.currentTarget.style.opacity = "1";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "none";
+                  e.currentTarget.style.color = autoScrollEnabled ? "var(--text-muted)" : "var(--text-dim)";
+                  e.currentTarget.style.opacity = autoScrollEnabled ? "1" : "0.55";
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3v14" />
+                  <path d="m6 11 6 6 6-6" />
+                  <path d="M5 21h14" />
+                  {!autoScrollEnabled && <line x1="4" y1="4" x2="20" y2="20" />}
+                </svg>
+              </button>
+            )}
+
             {onSoundToggle !== undefined && (
               <button
                 onClick={onSoundToggle}
                 title={soundEnabled ? "关闭完成提示音" : "开启完成提示音"}
+                aria-label={soundEnabled ? "关闭完成提示音" : "开启完成提示音"}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 32, height: 32, padding: 0,
