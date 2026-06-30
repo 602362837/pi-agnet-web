@@ -106,3 +106,36 @@ Added a read-only Settings → Trellis workflow visualizer with phase/state pars
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Add Trellis task chat context block
+
+**Date**: 2026-06-30
+**Task**: Add Trellis task chat context block
+**Branch**: `pi/20260630-135730`
+
+### Summary
+
+Implemented a Trellis task join-chat action that inserts a non-editable task context block into the chat composer, serializes it into resume context on send, updates session-link-compatible context generation, and documented the new frontend/library behavior.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f9e232d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

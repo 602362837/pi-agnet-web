@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~108 | Active |
+| `journal-1.md` | ~141 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-06-30 | Add Trellis task chat context block | `f9e232d` | `pi/20260630-135730` |
 | 3 | 2026-06-30 | Trellis workflow visualizer | `00e29cd`, `1e291dd`, `f24a1e7` | `pi/20260630-093810` |
 | 2 | 2026-06-30 | Improve Trellis task hierarchy UI | `1643eb6` | `pi/20260630-090624` |
 | 1 | 2026-06-29 | Temporary account usage selection | `69b6550` | `pi/20260629-180019` |
