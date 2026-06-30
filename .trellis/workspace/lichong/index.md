@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~107 | Active |
+| `journal-1.md` | ~141 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-06-30 | Codex reset credits | `d4e4953`, `67a4613` | `main` |
 | 29 | 2026-06-30 | ChatGPT account warmup | `1e55311`, `dd522d4` | `main` |
 | 28 | 2026-06-29 | Git panel branch preview | `e3c5213` | `main` |
 | 27 | 2026-06-29 | Git panel branch switching | `1a2102c` | `main` |
