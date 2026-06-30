@@ -294,7 +294,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
           <div className="w-full max-w-[820px]">
             <div
-              className="mb-3"
+              className="chat-empty-header mb-3"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -305,7 +305,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 fontFamily: "var(--font-mono)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flex: 1, lineHeight: 1.4 }}>
+              <div className="chat-empty-title-row" style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flex: 1, lineHeight: 1.4 }}>
                 <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text)" }}>π</span>
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: "-0.01em" }}>Pi Agent Web</span>
                 <span style={{ fontSize: 14, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
@@ -407,12 +407,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             <div ref={messagesEndRef} />
           </div>
         </div>
-        <ChatMinimap
-          messages={messages}
-          streamingMessage={streamState.streamingMessage}
-          scrollContainer={scrollContainerRef}
-          messageRefs={messageRefs}
-        />
+        <div className="chat-minimap-wrap">
+          <ChatMinimap
+            messages={messages}
+            streamingMessage={streamState.streamingMessage}
+            scrollContainer={scrollContainerRef}
+            messageRefs={messageRefs}
+          />
+        </div>
       </div>
 
       <div className="relative">

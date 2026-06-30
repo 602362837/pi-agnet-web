@@ -1058,11 +1058,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   return (
     <div
+      className="chat-input-shell"
       style={{
         flexShrink: 0,
         background: "transparent",
         padding: "0 16px 8px",
-        paddingRight: 52, // 16px base + 36px for ChatMinimap alignment
+        paddingRight: "var(--chat-input-right-padding, 52px)",
       }}
     >
       {/* Hidden file inputs */}
@@ -1089,7 +1090,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      <div className="chat-input-inner" style={{ maxWidth: 820, margin: "0 auto" }}>
         {/* Retry banner */}
         {retryInfo && (
           <div style={{
@@ -1182,6 +1183,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         {/* Main input */}
         <div
+          className="chat-input-main-row"
           style={{
             position: "relative",
             display: "flex",
@@ -1389,7 +1391,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
 
           {isStreaming ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end" }}>
+            <div className="chat-input-send-row" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end" }}>
               {onSteer && (
                 <button
                   onClick={() => sendQueued("steer")}
@@ -1469,10 +1471,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         </div>
 
         {/* Bottom bar: left | center (context) | right */}
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="chat-input-controls" style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
 
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
-          <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 2 }}>
+          <div className="chat-input-control-group chat-input-control-group-left" style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 2 }}>
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
@@ -1581,7 +1583,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     const bottom = viewportHeight - modelDropdownRect.top + 6;
                     const maxH = Math.max(120, Math.min(modelDropdownRect.top - 8, viewportHeight * 0.6));
                     return (
-                    <div ref={modelDropdownPanelRef} style={{
+                    <div ref={modelDropdownPanelRef} className="chat-input-dropdown-panel" style={{
                       position: "fixed",
                       bottom, left: modelDropdownRect.left,
                       zIndex: 500, background: "var(--bg)", border: "1px solid var(--border)",
@@ -1636,10 +1638,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
 
           {/* spacer */}
-          <div style={{ flex: 1 }} />
+          <div className="chat-input-control-spacer" style={{ flex: 1 }} />
 
           {/* RIGHT: thinking + tools preset + compact + scroll/sound toggles (idle) | Stop + toggles (streaming) */}
-          <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 2, marginLeft: "auto" }}>
+          <div className="chat-input-control-group chat-input-control-group-right" style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 2, marginLeft: "auto" }}>
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button

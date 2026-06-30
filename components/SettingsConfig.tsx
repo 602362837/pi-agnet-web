@@ -817,6 +817,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
   return (
     <>
     <div
+      className="pi-modal-overlay"
       onClick={onClose}
       style={{
         position: "fixed",
@@ -830,6 +831,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
       }}
     >
       <div
+        className="pi-modal-panel settings-modal-panel"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(760px, calc(100vw - 40px))",
@@ -857,7 +859,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
           </button>
         </div>
 
-        <div style={{ display: "flex", minHeight: 0 }}>
+        <div className="settings-modal-body" style={{ display: "flex", minHeight: 0 }}>
           <div style={{ width: 150, borderRight: "1px solid var(--border)", padding: 10, background: "var(--bg-subtle)", flexShrink: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             {renderSectionButton("worktree", "WorkTree", "New WorkTree 默认配置")}
             {renderSectionButton("usage", "Usage", "Usage 统计范围")}

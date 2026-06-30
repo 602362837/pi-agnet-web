@@ -921,9 +921,10 @@ function TextFileViewer({ filePath, cwd, onAddChat }: Props) {
   const hasDiff = prevContent !== null && prevContent !== data.content;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div className="file-viewer-root" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Status bar */}
       <div
+        className="file-viewer-status-bar"
         style={{
           display: "flex",
           alignItems: "center",
@@ -1091,7 +1092,7 @@ function TextFileViewer({ filePath, cwd, onAddChat }: Props) {
       </div>
 
       {/* Content area */}
-      <div ref={contentRef} style={{ flex: 1, overflow: "auto", background: "var(--bg)" }} onMouseUp={handleMouseUp}>
+      <div ref={contentRef} className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }} onMouseUp={handleMouseUp}>
         {viewMode === "diff" && hasDiff ? (
           <DiffView oldContent={prevContent!} newContent={data.content} language={data.language} />
         ) : isHtml && previewMode ? (
