@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
 
@@ -20,6 +20,13 @@ interface FileNode {
   loaded?: boolean;
 }
 
+interface DirectoryEntriesResult {
+  entries: FileNode[];
+  total: number;
+  truncated: boolean;
+  limit: number | null;
+}
+
 interface Props {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string) => void;
@@ -27,7 +34,7 @@ interface Props {
   onAtMention?: (relativePath: string) => void;
 }
 
-async function fetchEntries(dirPath: string): Promise<FileNode[]> {
+async function fetchEntries(dirPath: string): Promise<DirectoryEntriesResult> {
   const encoded = encodeFilePathForApi(dirPath);
   const res = await fetch(`/api/files/${encoded}?type=list`);
   if (!res.ok) {
@@ -40,8 +47,8 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
     }
     throw new Error(message);
   }
-  const data = await res.json() as { entries?: FileEntry[] };
-  return (data.entries ?? []).map((e) => ({
+  const data = await res.json() as { entries?: FileEntry[]; total?: number; truncated?: boolean; limit?: number };
+  const entries = (data.entries ?? []).map((e) => ({
     name: e.name,
     fullPath: joinFilePath(dirPath, e.name),
     isDir: e.isDir,
@@ -49,6 +56,20 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
     children: e.isDir ? [] : undefined,
     loaded: !e.isDir,
   }));
+  return {
+    entries,
+    total: typeof data.total === "number" ? data.total : entries.length,
+    truncated: data.truncated === true,
+    limit: typeof data.limit === "number" ? data.limit : null,
+  };
+}
+
+function TreeStatusRow({ depth, color = "var(--text-dim)", children }: { depth: number; color?: string; children: ReactNode }) {
+  return (
+    <div style={{ paddingLeft: 8 + depth * 14, paddingRight: 8, fontSize: 11, color, minHeight: 22, display: "flex", alignItems: "center" }}>
+      {children}
+    </div>
+  );
 }
 
 function TreeNode({
@@ -72,19 +93,23 @@ function TreeNode({
 }) {
   const open = expandedPaths.has(node.fullPath);
   const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
+  const [childrenMeta, setChildrenMeta] = useState<Pick<DirectoryEntriesResult, "total" | "truncated" | "limit"> | null>(null);
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [hovered, setHovered] = useState(false);
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
     setLoading(true);
+    setLoadError(null);
     try {
-      const entries = await fetchEntries(node.fullPath);
-      setChildren(entries);
+      const result = await fetchEntries(node.fullPath);
+      setChildren(result.entries);
+      setChildrenMeta({ total: result.total, truncated: result.truncated, limit: result.limit });
       setLoaded(true);
-    } catch {
-      // ignore
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
@@ -203,13 +228,22 @@ function TreeNode({
       </div>
       {node.isDir && open && (
         <div>
+          {loading && children.length === 0 && (
+            <TreeStatusRow depth={depth + 1}>Loading...</TreeStatusRow>
+          )}
+          {loadError && (
+            <TreeStatusRow depth={depth + 1} color="#f87171">{loadError}</TreeStatusRow>
+          )}
           {children.map((child) => (
             <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} />
           ))}
-          {children.length === 0 && loaded && (
-            <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
-              empty
-            </div>
+          {childrenMeta?.truncated && (
+            <TreeStatusRow depth={depth + 1}>
+              仅显示前 {children.length} / 共 {childrenMeta.total} 项
+            </TreeStatusRow>
+          )}
+          {children.length === 0 && loaded && !loading && !loadError && (
+            <TreeStatusRow depth={depth + 1}>empty</TreeStatusRow>
           )}
         </div>
       )}
@@ -219,6 +253,7 @@ function TreeNode({
 
 export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props) {
   const [roots, setRoots] = useState<FileNode[]>([]);
+  const [rootMeta, setRootMeta] = useState<Pick<DirectoryEntriesResult, "total" | "truncated" | "limit"> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
@@ -241,8 +276,12 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
 
     setLoading(cwdChanged);
     setError(null);
+    if (cwdChanged) setRootMeta(null);
     fetchEntries(cwd)
-      .then((entries) => setRoots(entries))
+      .then((result) => {
+        setRoots(result.entries);
+        setRootMeta({ total: result.total, truncated: result.truncated, limit: result.limit });
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [cwd, refreshKey]);
@@ -278,6 +317,11 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
           refreshKey={refreshKey}
         />
       ))}
+      {rootMeta?.truncated && (
+        <TreeStatusRow depth={0}>
+          仅显示前 {roots.length} / 共 {rootMeta.total} 项
+        </TreeStatusRow>
+      )}
       {roots.length === 0 && (
         <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
           No files found

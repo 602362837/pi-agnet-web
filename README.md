@@ -71,7 +71,7 @@ PI_CODING_AGENT_DIR=/path/to/pi-agent-data ypi
 | `sessions/` | 会话 JSONL 文件，按工作目录归档。 |
 | `models.json` | 模型提供商和模型列表配置。 |
 | `settings.json` | pi agent 设置，包括默认模型。 |
-| `pi-web.json` | Web UI 设置，例如 WorkTree、Usage、Web Terminal、ChatGPT 面板和 Trellis 设置。 |
+| `pi-web.json` | Web UI 设置，例如蛋黄𝝅聊天默认值、WorkTree、Usage、Web Terminal、ChatGPT 面板和 Trellis 设置。 |
 
 会话文件路径格式：
 

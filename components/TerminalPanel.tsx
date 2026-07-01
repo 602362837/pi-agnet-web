@@ -9,6 +9,7 @@ interface Props {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onClose: () => void;
+  initialInput?: { id: string; text: string } | null;
 }
 
 type TerminalBackend = "pty" | "script" | "pipe";
@@ -84,6 +85,7 @@ interface TerminalSessionViewProps {
   visible: boolean;
   layoutVersion: number;
   onTabUpdate: (tabId: string, updates: Partial<Pick<TerminalTabState, "sessionId" | "shell" | "backend" | "status" | "error">>) => void;
+  initialInput?: { id: string; text: string } | null;
 }
 
 const MIN_PANE_WIDTH = 220;
@@ -312,13 +314,14 @@ function deleteTerminalSession(sessionId: string | null): void {
   void fetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 }
 
-function TerminalSessionView({ tab, visible, layoutVersion, onTabUpdate }: TerminalSessionViewProps) {
+function TerminalSessionView({ tab, visible, layoutVersion, onTabUpdate, initialInput }: TerminalSessionViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(tab.sessionId);
   const localEchoRef = useRef(false);
   const localInputLengthRef = useRef(0);
+  const injectedInputIdRef = useRef<string | null>(null);
   const backendRef = useRef<TerminalBackend | null>(tab.backend);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -488,6 +491,17 @@ function TerminalSessionView({ tab, visible, layoutVersion, onTabUpdate }: Termi
     }, 0);
   }, [fitTerminal, layoutVersion, visible]);
 
+  useEffect(() => {
+    if (!visible || !initialInput || injectedInputIdRef.current === initialInput.id || tab.status !== "connected" || !tab.sessionId) return;
+    injectedInputIdRef.current = initialInput.id;
+    void fetch(`/api/terminal/sessions/${encodeURIComponent(tab.sessionId)}/input`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: initialInput.text }),
+    });
+    terminalRef.current?.focus();
+  }, [initialInput, tab.sessionId, tab.status, visible]);
+
   return (
     <div
       ref={containerRef}
@@ -503,7 +517,7 @@ function TerminalSessionView({ tab, visible, layoutVersion, onTabUpdate }: Termi
   );
 }
 
-export function TerminalPanel({ cwd, collapsed, onToggleCollapsed, onClose }: Props) {
+export function TerminalPanel({ cwd, collapsed, onToggleCollapsed, onClose, initialInput }: Props) {
   const [state, dispatch] = useReducer(terminalReducer, cwd, createInitialState);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState("");
@@ -754,6 +768,7 @@ export function TerminalPanel({ cwd, collapsed, onToggleCollapsed, onClose }: Pr
                 visible={!collapsed && pane.activeTabId === tabId}
                 layoutVersion={layoutVersion}
                 onTabUpdate={updateTab}
+                initialInput={pane.activeTabId === tabId ? initialInput : null}
               />
             );
           })}

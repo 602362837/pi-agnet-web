@@ -5,6 +5,7 @@ import type { DeepSeekBalanceResult } from "@/lib/deepseek-balance";
 import { ACCOUNT_JSON_CONVERTERS, RAW_ACCOUNT_JSON_EXAMPLE, validateRawOAuthCredentialImport, type OAuthAccountImportMode } from "@/lib/oauth-account-converters";
 import { earliestResetCreditExpiration, formatQuotaQueriedAt, formatResetCountdown, knownQuotaTiers, quotaColor, QUOTA_TIER_LABELS, type CodexResetCreditDisplay } from "@/lib/quota-display";
 import { ChatGptWarmupDialog } from "./ChatGptWarmupDialog";
+import { SelectDropdown } from "./SelectDropdown";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -316,11 +317,15 @@ function NumInput({ value, onChange, placeholder }: { value: string; onChange: (
 
 function Select({ value, onChange, options, required }: { value: string; onChange: (v: string) => void; options: readonly string[]; required?: boolean }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}
-      style={{ ...inputStyle, color: value ? "var(--text)" : "var(--text-dim)" }}>
-      {!required && <option value="">— inherit / none —</option>}
-      {options.map((o) => <option key={o} value={o}>{o}</option>)}
-    </select>
+    <SelectDropdown
+      value={value}
+      options={[
+        ...(!required ? [{ value: "", label: "— inherit / none —" }] : []),
+        ...options.map((option) => ({ value: option, label: option })),
+      ]}
+      onChange={onChange}
+      ariaLabel="Select API type"
+    />
   );
 }
 

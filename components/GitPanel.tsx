@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { GitStatusInfo, GitFileChange, GitGraphData } from "@/lib/types";
 import { CommitGraph } from "./CommitGraph";
+import { SelectDropdown } from "./SelectDropdown";
 
 interface Props {
   cwd: string | null;
@@ -277,36 +278,22 @@ export function GitPanel({ cwd, refreshKey, onDirtyChange }: Props) {
             Preview / switch local branch
           </div>
           <div className="git-branch-switch-row" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <select
-              value={selectedBranch}
-              onChange={(e) => {
-                setSelectedBranch(e.currentTarget.value);
-                setSwitchError(null);
-              }}
-              disabled={loading || switching || branchOptions.length === 0}
-              aria-label="Select local Git branch"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                height: 28,
-                padding: "0 6px",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                background: "var(--bg)",
-                color: "var(--text)",
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                opacity: loading || switching || branchOptions.length === 0 ? 0.6 : 1,
-              }}
-            >
-              {branchOptions.length === 0 ? (
-                <option value="">No local branches</option>
-              ) : branchOptions.map((branch) => (
-                <option key={branch.name} value={branch.name}>
-                  {branch.isCurrent ? "✓ " : ""}{branch.name}
-                </option>
-              ))}
-            </select>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <SelectDropdown
+                value={selectedBranch}
+                options={branchOptions.length === 0
+                  ? [{ value: "", label: "No local branches", disabled: true }]
+                  : branchOptions.map((branch) => ({ value: branch.name, label: branch.name, meta: branch.isCurrent ? "current" : undefined }))}
+                onChange={(branch) => {
+                  setSelectedBranch(branch);
+                  setSwitchError(null);
+                }}
+                disabled={loading || switching || branchOptions.length === 0}
+                ariaLabel="Select local Git branch"
+                size="field"
+                minWidth={220}
+              />
+            </div>
             <button
               type="button"
               onClick={() => void handleSwitchBranch()}

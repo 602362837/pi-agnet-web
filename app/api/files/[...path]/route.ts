@@ -14,6 +14,7 @@ const IGNORED_SUFFIXES = [".pyc"];
 const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
 const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 const DOCX_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+const DIRECTORY_LIST_ENTRY_LIMIT = 2000;
 
 const IMAGE_EXT_TO_MIME: Record<string, string> = {
   png: "image/png",
@@ -531,15 +532,23 @@ export async function GET(
       return NextResponse.json({ error: "Not a directory" }, { status: 400 });
     }
 
-    const names = fs.readdirSync(filePath);
-    const entries = names
-      .filter((name) => !IGNORED_NAMES.has(name) && !IGNORED_SUFFIXES.some((s) => name.endsWith(s)))
-      .map((name) => {
-        const full = path.join(filePath, name);
+    const dirents = fs.readdirSync(filePath, { withFileTypes: true });
+    const sortedDirents = dirents
+      .filter((entry) => !IGNORED_NAMES.has(entry.name) && !IGNORED_SUFFIXES.some((suffix) => entry.name.endsWith(suffix)))
+      .sort((a, b) => {
+        // Dirs first, then files, both alphabetically. Use Dirent metadata so
+        // large folders do not need a blocking stat call for every child.
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    const visibleDirents = sortedDirents.slice(0, DIRECTORY_LIST_ENTRY_LIMIT);
+    const entries = visibleDirents
+      .map((entry) => {
+        const full = path.join(filePath, entry.name);
         try {
           const s = fs.statSync(full);
           return {
-            name,
+            name: entry.name,
             isDir: s.isDirectory(),
             size: s.isFile() ? s.size : 0,
             modified: s.mtime.toISOString(),
@@ -548,14 +557,15 @@ export async function GET(
           return null;
         }
       })
-      .filter(Boolean)
-      .sort((a, b) => {
-        // Dirs first, then files, both alphabetically
-        if (a!.isDir !== b!.isDir) return a!.isDir ? -1 : 1;
-        return a!.name.localeCompare(b!.name);
-      });
+      .filter((entry): entry is { name: string; isDir: boolean; size: number; modified: string } => entry !== null);
 
-    return NextResponse.json({ entries, path: filePath });
+    return NextResponse.json({
+      entries,
+      path: filePath,
+      total: sortedDirents.length,
+      truncated: sortedDirents.length > DIRECTORY_LIST_ENTRY_LIMIT,
+      limit: DIRECTORY_LIST_ENTRY_LIMIT,
+    });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

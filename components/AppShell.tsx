@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
@@ -26,6 +26,22 @@ import type { TrellisSessionTaskLinkResult, TrellisTaskDetail } from "@/lib/trel
 import { trellisTaskDetailToChatContext, type TrellisTaskChatContext } from "@/lib/trellis-chat-context";
 import type { ChatInputHandle } from "./ChatInput";
 
+const DEFAULT_SIDEBAR_WIDTH = 260;
+const MIN_SIDEBAR_WIDTH = 220;
+const MAX_SIDEBAR_WIDTH = 520;
+const SIDEBAR_WIDTH_STORAGE_KEY = "pi-web-sidebar-width";
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getInitialSidebarWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
+  const stored = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+  if (!Number.isFinite(stored)) return DEFAULT_SIDEBAR_WIDTH;
+  return clampNumber(stored, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+}
+
 export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -45,7 +61,10 @@ export function AppShell() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalCollapsed, setTerminalCollapsed] = useState(false);
   const [terminalDockCwd, setTerminalDockCwd] = useState<string | null>(null);
+  const [terminalInitialInput, setTerminalInitialInput] = useState<{ id: string; text: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(getInitialSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
 
@@ -65,6 +84,42 @@ export function AppShell() {
     void loadWebConfig(controller.signal);
     return () => controller.abort();
   }, [loadWebConfig]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  const handleSidebarResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!sidebarOpen) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    const maxWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, Math.floor(window.innerWidth * 0.6)));
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    setSidebarResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampNumber(startWidth + moveEvent.clientX - startX, MIN_SIDEBAR_WIDTH, maxWidth);
+      setSidebarWidth(nextWidth);
+    };
+
+    const finishResize = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setSidebarResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+  }, [sidebarOpen, sidebarWidth]);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
@@ -352,6 +407,13 @@ export function AppShell() {
     setRightPanelOpen(true);
   }, [trellisSessionTask]);
 
+  const handleOpenTerminalCommand = useCallback((cwd: string, command: string) => {
+    setTerminalDockCwd(cwd);
+    setTerminalOpen(true);
+    setTerminalCollapsed(false);
+    setTerminalInitialInput({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, text: command });
+  }, []);
+
   const handleJoinTrellisTaskChat = useCallback((task: TrellisTaskDetail) => {
     if (task.isArchived || !trellisCwd) return;
 
@@ -443,6 +505,16 @@ export function AppShell() {
     };
   }, [browserTitleCwd, browserTitleGit]);
 
+  const sidebarContainerStyle = {
+    "--sidebar-width": `${sidebarWidth}px`,
+    background: "var(--bg-panel)",
+    borderRight: "1px solid var(--border)",
+    display: "flex",
+    flexDirection: "column",
+    flexShrink: 0,
+    zIndex: 200,
+  } as CSSProperties;
+
   const sidebarContent = (
     <>
       <SessionSidebar
@@ -458,6 +530,9 @@ export function AppShell() {
         onOpenFile={handleOpenFile}
         explorerRefreshKey={explorerRefreshKey}
         onAtMention={handleAtMention}
+        trellisEnabled={trellisEnabled}
+        terminalEnabled={terminalEnabled}
+        onOpenTerminalCommand={handleOpenTerminalCommand}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -553,17 +628,31 @@ export function AppShell() {
 
       {/* Left sidebar */}
       <div
-        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}`}
-        style={{
-          background: "var(--bg-panel)",
-          borderRight: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-          flexShrink: 0,
-          zIndex: 200,
-        }}
+        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${sidebarResizing ? " sidebar-resizing" : ""}`}
+        style={sidebarContainerStyle}
       >
         {sidebarContent}
+        {sidebarOpen && (
+          <div
+            className="sidebar-resize-handle"
+            onPointerDown={handleSidebarResizePointerDown}
+            title="Resize sidebar"
+            aria-label="Resize sidebar"
+            role="separator"
+            aria-orientation="vertical"
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: 8,
+              cursor: "col-resize",
+              touchAction: "none",
+              background: sidebarResizing ? "rgba(37,99,235,0.08)" : "transparent",
+              zIndex: 25,
+            }}
+          />
+        )}
       </div>
 
       {/* Center: chat */}
@@ -1001,6 +1090,7 @@ export function AppShell() {
               onSessionStatsChange={handleSessionStatsChange}
               onContextUsageChange={handleContextUsageChange}
               onSubagentChange={handleSubagentChange}
+              defaultToolPreset={webConfig?.yolk.defaultToolPreset}
             />
           ) : showPlaceholder ? (
             activeCwd ? (
@@ -1035,7 +1125,9 @@ export function AppShell() {
                 setTerminalOpen(false);
                 setTerminalDockCwd(null);
                 setTerminalCollapsed(false);
+                setTerminalInitialInput(null);
               }}
+              initialInput={terminalInitialInput}
             />
           )}
         </div>
@@ -1083,7 +1175,7 @@ export function AppShell() {
               {trellisCwd && <span title={trellisCwd} style={{ color: "var(--text-dim)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{trellisCwd}</span>}
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
-              <TrellisPanel cwd={trellisCwd} includeArchivedDefault={trellisIncludeArchivedDefault} focusedTaskKey={focusedTrellisTaskKey} onOpenFile={handleOpenFile} onJoinTaskChat={handleJoinTrellisTaskChat} />
+              <TrellisPanel cwd={trellisCwd} includeArchivedDefault={trellisIncludeArchivedDefault} focusedTaskKey={focusedTrellisTaskKey} onOpenFile={handleOpenFile} onJoinTaskChat={handleJoinTrellisTaskChat} onOpenTerminalCommand={handleOpenTerminalCommand} terminalEnabled={terminalEnabled} />
             </div>
           </>
         )}
@@ -1154,6 +1246,8 @@ export function AppShell() {
         cwd={trellisCwd}
         onConfigChange={() => { void loadWebConfig(); }}
         onClose={() => { setSettingsConfigOpen(false); void loadWebConfig(); }}
+        terminalEnabled={terminalEnabled}
+        onOpenTerminalCommand={handleOpenTerminalCommand}
       />
     )}
     </>
