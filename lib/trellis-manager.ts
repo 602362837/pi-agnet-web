@@ -276,6 +276,23 @@ function assertPrerequisites(status: TrellisSetupStatus): void {
   }
 }
 
+export async function installTrellisCli({
+  cwd,
+  config,
+}: {
+  cwd?: string;
+  config: PiWebTrellisConfig;
+}): Promise<TrellisCommandResponse> {
+  const env = applyProxyEnv(config);
+  const output: string[] = [];
+  await ensureTrellisCli(env, output);
+  return {
+    success: true,
+    output: capOutput(output.join("\n") || "Trellis CLI is already installed."),
+    status: await getTrellisSetupStatus(cwd ?? process.cwd(), env),
+  };
+}
+
 export async function initializeTrellisProject({
   cwd,
   developerName,

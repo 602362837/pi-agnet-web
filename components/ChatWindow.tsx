@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PiWebToolPreset } from "@/lib/pi-web-config";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
@@ -25,6 +26,7 @@ interface Props {
   onSubagentChange?: (runs: import("@/hooks/useAgentSession").SubagentRun[]) => void;
   onSessionStatsChange?: (stats: { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }; cost?: number } | null) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
+  defaultToolPreset?: PiWebToolPreset;
 }
 
 function phaseLabel(phase: AgentPhase): string {
@@ -94,7 +96,7 @@ function Typewriter({ phrases }: { phrases: string[] }) {
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSubagentChange, onSessionStatsChange, onContextUsageChange }: Props) {
+export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSubagentChange, onSessionStatsChange, onContextUsageChange, defaultToolPreset }: Props) {
   const { autoScrollEnabled, onAutoScrollToggle } = useAutoScroll();
   const {
     loading, error, messages, entryIds, streamState,
@@ -111,7 +113,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSubagentChange,
-    autoScrollEnabled,
+    autoScrollEnabled, defaultToolPreset,
   });
 
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();

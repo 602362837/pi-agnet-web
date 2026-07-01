@@ -2,6 +2,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
+export type PiWebToolPreset = "none" | "default" | "full" | "subagent";
+
+export interface PiWebYolkConfig {
+  defaultToolPreset: PiWebToolPreset;
+}
+
 export interface PiWebWorktreeConfig {
   baseRef: string;
   branchNameTemplate: string;
@@ -111,6 +117,7 @@ export interface PiWebEditorConfig {
 }
 
 export interface PiWebConfig {
+  yolk: PiWebYolkConfig;
   worktree: PiWebWorktreeConfig;
   trellis: PiWebTrellisConfig;
   usage: PiWebUsageConfig;
@@ -120,6 +127,7 @@ export interface PiWebConfig {
 }
 
 export interface PiWebConfigPatch {
+  yolk?: unknown;
   worktree?: unknown;
   trellis?: unknown;
   usage?: unknown;
@@ -144,6 +152,9 @@ export class PiWebConfigValidationError extends Error {
 }
 
 export const DEFAULT_PI_WEB_CONFIG: PiWebConfig = {
+  yolk: {
+    defaultToolPreset: "default",
+  },
   worktree: {
     baseRef: "HEAD",
     branchNameTemplate: "pi/{yyyyMMdd-HHmmss}",
@@ -256,6 +267,10 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 
 function readInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) ? value : fallback;
+}
+
+function readToolPreset(value: unknown, fallback: PiWebToolPreset): PiWebToolPreset {
+  return value === "none" || value === "default" || value === "full" || value === "subagent" ? value : fallback;
 }
 
 function readSessionDisplay(value: unknown, fallback: "separate" | "tag"): "separate" | "tag" {
@@ -415,6 +430,7 @@ function readChatGptWarmupConfig(value: unknown, fallback: PiWebChatGptWarmupCon
 function normalizePiWebConfig(raw: unknown): PiWebConfig {
   const defaults = DEFAULT_PI_WEB_CONFIG;
   const root = isRecord(raw) ? raw : {};
+  const yolk = isRecord(root.yolk) ? root.yolk : {};
   const worktree = isRecord(root.worktree) ? root.worktree : {};
   const trellis = isRecord(root.trellis) ? root.trellis : {};
   const usage = isRecord(root.usage) ? root.usage : {};
@@ -429,6 +445,9 @@ function normalizePiWebConfig(raw: unknown): PiWebConfig {
     }
   }
   return {
+    yolk: {
+      defaultToolPreset: readToolPreset(yolk.defaultToolPreset, defaults.yolk.defaultToolPreset),
+    },
     worktree: {
       baseRef: readString(worktree.baseRef, defaults.worktree.baseRef),
       branchNameTemplate: readString(worktree.branchNameTemplate, defaults.worktree.branchNameTemplate),
@@ -515,6 +534,17 @@ function requireNonEmptyString(value: unknown, field: string): string {
     throw new PiWebConfigValidationError(`${field} must be a non-empty string`);
   }
   return value.trim();
+}
+
+export function validatePiWebYolkConfig(value: unknown): PiWebYolkConfig {
+  if (!isRecord(value)) {
+    throw new PiWebConfigValidationError("yolk config must be an object");
+  }
+  const defaultToolPreset = value.defaultToolPreset;
+  if (defaultToolPreset !== "none" && defaultToolPreset !== "default" && defaultToolPreset !== "full" && defaultToolPreset !== "subagent") {
+    throw new PiWebConfigValidationError("yolk.defaultToolPreset must be none, default, full, or subagent");
+  }
+  return { defaultToolPreset };
 }
 
 export function validatePiWebWorktreeConfig(value: unknown): PiWebWorktreeConfig {
@@ -816,13 +846,14 @@ export function writePiWebConfigPatch(patch: PiWebConfigPatch): PiWebConfigReadR
     throw new PiWebConfigValidationError("config patch must be an object");
   }
 
+  const hasYolk = Object.prototype.hasOwnProperty.call(patch, "yolk");
   const hasWorktree = Object.prototype.hasOwnProperty.call(patch, "worktree");
   const hasTrellis = Object.prototype.hasOwnProperty.call(patch, "trellis");
   const hasUsage = Object.prototype.hasOwnProperty.call(patch, "usage");
   const hasTerminal = Object.prototype.hasOwnProperty.call(patch, "terminal");
   const hasChatGpt = Object.prototype.hasOwnProperty.call(patch, "chatgpt");
   const hasEditor = Object.prototype.hasOwnProperty.call(patch, "editor");
-  if (!hasWorktree && !hasTrellis && !hasUsage && !hasTerminal && !hasChatGpt && !hasEditor) {
+  if (!hasYolk && !hasWorktree && !hasTrellis && !hasUsage && !hasTerminal && !hasChatGpt && !hasEditor) {
     throw new PiWebConfigValidationError("no supported config sections provided");
   }
 
@@ -831,6 +862,7 @@ export function writePiWebConfigPatch(patch: PiWebConfigPatch): PiWebConfigReadR
   const raw = current.parseError ? {} : current.raw;
   const currentConfig = normalizePiWebConfig(raw);
   const chatGptPatch = hasChatGpt ? patch.chatgpt : undefined;
+  const normalizedYolk = hasYolk ? validatePiWebYolkConfig(patch.yolk) : undefined;
   const normalizedWorktree = hasWorktree ? validatePiWebWorktreeConfig(patch.worktree) : undefined;
   const normalizedTrellis = hasTrellis ? validatePiWebTrellisConfig(patch.trellis) : undefined;
   const normalizedUsage = hasUsage ? validatePiWebUsageConfig(patch.usage) : undefined;
@@ -844,6 +876,14 @@ export function writePiWebConfigPatch(patch: PiWebConfigPatch): PiWebConfigReadR
   } : chatGptPatch) : undefined;
   const normalizedEditor = hasEditor ? validatePiWebEditorConfig(patch.editor) : undefined;
   const nextRaw: Record<string, unknown> = { ...raw };
+
+  if (normalizedYolk) {
+    const previousYolk = isRecord(raw.yolk) ? raw.yolk : {};
+    nextRaw.yolk = {
+      ...previousYolk,
+      ...normalizedYolk,
+    };
+  }
 
   if (normalizedWorktree) {
     const previousWorktree = isRecord(raw.worktree) ? raw.worktree : {};

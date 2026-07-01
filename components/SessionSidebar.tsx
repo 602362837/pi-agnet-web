@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import type { TrellisSetupStatus } from "@/lib/trellis-setup-types";
 import type { GitInfo, SessionInfo, WorktreeInfo } from "@/lib/types";
 import { formatWorkspaceHeaderTitle, formatWorkspaceSubtitle, formatWorkspaceTitle } from "@/lib/workspace-title";
 import { FileExplorer } from "./FileExplorer";
@@ -18,6 +19,9 @@ interface Props {
   onOpenFile?: (filePath: string, fileName: string) => void;
   explorerRefreshKey?: number;
   onAtMention?: (relativePath: string) => void;
+  trellisEnabled?: boolean;
+  terminalEnabled?: boolean;
+  onOpenTerminalCommand?: (cwd: string, command: string) => void;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -58,10 +62,34 @@ function shortenCwd(cwd: string, homeDir?: string): string {
   return "…/" + parts.slice(-2).join(sep);
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildTrellisInitCommand(status: TrellisSetupStatus | null): string {
+  const developerName = status?.suggestedDeveloperName?.trim();
+  return developerName ? `trellis init -u ${shellQuote(developerName)} --pi` : "trellis init --pi";
+}
+
 function makeTempSessionId(): string {
   return typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+const MIN_SESSION_LIST_HEIGHT = 80;
+const MIN_EXPLORER_HEIGHT = 120;
+const EXPLORER_HEIGHT_STORAGE_KEY = "pi-web-sidebar-explorer-height";
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getInitialExplorerHeight(): number | null {
+  if (typeof window === "undefined") return null;
+  const stored = Number(window.localStorage.getItem(EXPLORER_HEIGHT_STORAGE_KEY));
+  if (!Number.isFinite(stored)) return null;
+  return Math.max(MIN_EXPLORER_HEIGHT, stored);
 }
 
 function WorktreeBadge({ worktree }: { worktree?: WorktreeInfo }) {
@@ -304,7 +332,7 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
   return roots;
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onAtMention }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onAtMention, trellisEnabled = false, terminalEnabled = false, onOpenTerminalCommand }: Props) {
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -324,6 +352,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [archiveAllBusy, setArchiveAllBusy] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [explorerKey, setExplorerKey] = useState(0);
+  const [explorerHeight, setExplorerHeight] = useState<number | null>(getInitialExplorerHeight);
+  const [explorerResizing, setExplorerResizing] = useState(false);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [creatingWorktree, setCreatingWorktree] = useState(false);
@@ -338,8 +368,54 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [archivedCwds, setArchivedCwds] = useState<string[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<SessionInfo[]>([]);
   const [archivedExpanded, setArchivedExpanded] = useState(false);
+  const [trellisSetupStatus, setTrellisSetupStatus] = useState<TrellisSetupStatus | null>(null);
+  const [trellisStatusRefreshKey, setTrellisStatusRefreshKey] = useState(0);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionListRef = useRef<HTMLDivElement>(null);
+  const explorerSectionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (explorerHeight === null) return;
+    window.localStorage.setItem(EXPLORER_HEIGHT_STORAGE_KEY, String(Math.round(explorerHeight)));
+  }, [explorerHeight]);
+
+  const handleExplorerResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!explorerOpen) return;
+    const explorerEl = explorerSectionRef.current;
+    const sessionListEl = sessionListRef.current;
+    if (!explorerEl || !sessionListEl) return;
+
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = explorerEl.getBoundingClientRect().height;
+    const sessionListHeight = sessionListEl.getBoundingClientRect().height;
+    const maxHeight = Math.max(MIN_EXPLORER_HEIGHT, startHeight + sessionListHeight - MIN_SESSION_LIST_HEIGHT);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    setExplorerResizing(true);
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = clampNumber(startHeight - (moveEvent.clientY - startY), MIN_EXPLORER_HEIGHT, maxHeight);
+      setExplorerHeight(nextHeight);
+    };
+
+    const finishResize = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setExplorerResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+  }, [explorerOpen]);
 
   const loadSessions = useCallback(async (showLoading = false) => {
     try {
@@ -516,6 +592,26 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
     return () => controller.abort();
   }, [selectedCwd]);
+
+  useEffect(() => {
+    if (!trellisEnabled || !selectedCwd) {
+      setTrellisSetupStatus(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    fetch(`/api/trellis/setup/status?cwd=${encodeURIComponent(selectedCwd)}`, { signal: controller.signal })
+      .then(async (res) => {
+        const data = await res.json() as { status?: TrellisSetupStatus; error?: string };
+        if (!res.ok || data.error || !data.status) throw new Error(data.error ?? `HTTP ${res.status}`);
+        setTrellisSetupStatus(data.status);
+      })
+      .catch((err) => {
+        if ((err as { name?: string }).name !== "AbortError") setTrellisSetupStatus(null);
+      });
+
+    return () => controller.abort();
+  }, [selectedCwd, trellisEnabled, trellisStatusRefreshKey]);
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
@@ -745,6 +841,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   // Build parent-child tree within the filtered set
   const sessionTree = buildSessionTree(filteredSessions);
+  const showTrellisInitializePrompt = trellisEnabled && !!selectedCwd && !!trellisSetupStatus?.canInitialize && !trellisSetupStatus.project.hasTrellisDir;
+  const trellisInitCommand = buildTrellisInitCommand(trellisSetupStatus);
+  const canOpenTrellisInitTerminal = showTrellisInitializePrompt && terminalEnabled && !!onOpenTerminalCommand;
+
+  useEffect(() => {
+    if (!showTrellisInitializePrompt) return;
+    const interval = window.setInterval(() => {
+      setTrellisStatusRefreshKey((key) => key + 1);
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, [showTrellisInitializePrompt]);
 
   return (
     <div className="session-sidebar-root" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1408,8 +1515,29 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </div>
       )}
 
+      {showTrellisInitializePrompt && selectedCwd && (
+        <div style={{ margin: "8px 10px", padding: 9, borderRadius: 8, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(37,99,235,0.08)", color: "var(--text-muted)", fontSize: 11, lineHeight: 1.45, flexShrink: 0 }}>
+          <div style={{ color: "var(--text)", fontWeight: 800, marginBottom: 4 }}>Trellis 未初始化</div>
+          <div style={{ marginBottom: 7 }}>点击按钮会打开底部终端并填入初始化命令，请在终端中按回车并完成交互问询。</div>
+          <code style={{ display: "block", padding: "5px 6px", marginBottom: 7, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 10, overflowWrap: "anywhere" }}>{trellisInitCommand}</code>
+          <button
+            type="button"
+            disabled={!canOpenTrellisInitTerminal}
+            onClick={() => {
+              if (!canOpenTrellisInitTerminal) return;
+              onOpenTerminalCommand?.(selectedCwd, trellisInitCommand);
+              setTrellisStatusRefreshKey((key) => key + 1);
+            }}
+            title={terminalEnabled ? "在终端中填入 Trellis 初始化命令" : "请先在设置中启用 Web Terminal"}
+            style={{ width: "100%", padding: "6px 8px", borderRadius: 7, border: "none", background: canOpenTrellisInitTerminal ? "var(--accent)" : "var(--border)", color: "white", cursor: canOpenTrellisInitTerminal ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 800 }}
+          >
+            在终端中初始化
+          </button>
+        </div>
+      )}
+
       {/* Session list */}
-      <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      <div ref={sessionListRef} style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: MIN_SESSION_LIST_HEIGHT }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             Loading...
@@ -1554,15 +1682,33 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       {/* File Explorer section */}
       {(selectedCwdProp || selectedCwd) && (
         <div
+          ref={explorerSectionRef}
           style={{
-            borderTop: "1px solid var(--border)",
+            borderTop: explorerOpen ? "none" : "1px solid var(--border)",
             display: "flex",
             flexDirection: "column",
-            flex: explorerOpen ? "1 1 0" : "0 0 auto",
+            flex: explorerOpen ? (explorerHeight === null ? "1 1 0" : `0 1 ${explorerHeight}px`) : "0 0 auto",
             minHeight: 0,
             overflow: "hidden",
           }}
         >
+          {explorerOpen && (
+            <div
+              onPointerDown={handleExplorerResizePointerDown}
+              title="Resize sessions and explorer"
+              aria-label="Resize sessions and explorer"
+              role="separator"
+              aria-orientation="horizontal"
+              style={{
+                height: 7,
+                borderTop: "1px solid var(--border)",
+                background: explorerResizing ? "rgba(37,99,235,0.08)" : "transparent",
+                cursor: "row-resize",
+                flexShrink: 0,
+                touchAction: "none",
+              }}
+            />
+          )}
           <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
             <button
               onClick={() => setExplorerOpen((v) => !v)}
@@ -1590,7 +1736,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               >
                 <polyline points="3 2 7 5 3 8" />
               </svg>
-              Explorer
+              项目空间信息
             </button>
             <button
               onClick={() => {
@@ -1599,7 +1745,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
                 explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
               }}
-              title="Refresh explorer"
+              title="刷新项目空间信息"
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 26, height: 26, padding: 0, marginRight: 6,

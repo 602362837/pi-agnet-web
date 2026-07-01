@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ModelSelect, type ModelSelectOption } from "./ModelSelect";
+import { SelectDropdown, type SelectDropdownOption } from "./SelectDropdown";
 import { TrellisWorkflowVisualizer } from "./TrellisWorkflowVisualizer";
 import type {
   PiWebChatGptConfig,
@@ -12,9 +14,11 @@ import type {
   PiWebSubagentModality,
   PiWebSubagentRunPolicy,
   PiWebTerminalConfig,
+  PiWebToolPreset,
   PiWebTrellisConfig,
   PiWebUsageConfig,
   PiWebWorktreeConfig,
+  PiWebYolkConfig,
 } from "@/lib/pi-web-config";
 import type { TrellisCommandResponse, TrellisSetupStatus } from "@/lib/trellis-setup-types";
 
@@ -70,7 +74,7 @@ const TEMPLATE_VARIABLES = [
   { token: "{yyyyMMdd-HHmmss}", description: "创建时刻，格式如 20260625-153012" },
 ];
 
-type SettingsSection = "worktree" | "usage" | "terminal" | "chatgpt" | "editor" | "trellis";
+type SettingsSection = "yolk" | "worktree" | "usage" | "terminal" | "chatgpt" | "editor" | "trellis";
 type SubagentThinkingOption = PiWebSubagentRunPolicy["thinking"];
 
 const SUBAGENT_AGENT_NAMES = ["trellis-implement", "trellis-check", "trellis-research"];
@@ -87,6 +91,12 @@ const SUBAGENT_TIER_LABELS: Record<PiWebSubagentDifficultyTier, string> = {
   complex: "复杂：实现、重构、跨文件改动",
   critical: "关键：架构、安全、迁移、高风险改动",
 };
+const TOOL_PRESET_OPTIONS: SelectDropdownOption[] = [
+  { value: "none", label: "off", description: "无工具，纯聊天" },
+  { value: "default", label: "default", description: "4 项内置工具" },
+  { value: "full", label: "full", description: "全部内置工具" },
+  { value: "subagent", label: "subagent", description: "全部工具 + subagent 委派" },
+];
 
 function formatModelValue(model: PiWebSubagentModelRef): string {
   if (model.mode !== "specific") return model.mode;
@@ -154,23 +164,36 @@ function ModelPolicySelect({
   models: ModelListItem[];
   disabled?: boolean;
 }) {
+  const options = useMemo<ModelSelectOption[]>(() => [
+    { value: "followMain", label: "跟随主会话模型", detail: "策略", group: "模型策略", keywords: ["main", "current", "follow"] },
+    { value: "piDefault", label: "使用 Pi 默认模型", detail: "策略", group: "模型策略", keywords: ["pi", "default"] },
+    { value: "unset", label: "本层不指定", detail: "策略", group: "模型策略", keywords: ["unset", "none", "inherit"] },
+    ...models.map((model) => ({
+      value: `specific:${model.provider}/${model.id}`,
+      label: model.name,
+      detail: `${model.provider}/${model.id}`,
+      provider: model.provider,
+      modelId: model.id,
+      keywords: [model.name, model.provider, model.id, `${model.provider}/${model.name}`],
+    })),
+  ], [models]);
+
+  const selectedValue = formatModelValue(value);
+  const fallbackLabel = value.mode === "specific"
+    ? `${value.provider ?? "unknown"}/${value.modelId ?? "unknown"}`
+    : null;
+
   return (
-    <select
-      value={formatModelValue(value)}
-      onChange={(e) => onChange(parseModelValue(e.target.value))}
+    <ModelSelect
+      value={selectedValue}
+      options={options}
+      onChange={(nextValue) => onChange(parseModelValue(nextValue))}
       disabled={disabled}
-      style={{ ...inputStyle, opacity: disabled ? 0.6 : 1, cursor: disabled ? "not-allowed" : "pointer" }}
-    >
-      <option value="followMain">跟随主会话模型</option>
-      <option value="piDefault">使用 Pi 默认模型</option>
-      <option value="unset">本层不指定</option>
-      {models.length > 0 && <option disabled>──────────</option>}
-      {models.map((model) => (
-        <option key={`${model.provider}/${model.id}`} value={`specific:${model.provider}/${model.id}`}>
-          {model.name} · {model.provider}/{model.id}
-        </option>
-      ))}
-    </select>
+      fallbackLabel={fallbackLabel}
+      size="field"
+      placement="auto"
+      ariaLabel="选择模型"
+    />
   );
 }
 
@@ -183,17 +206,23 @@ function ThinkingSelect({
   onChange: (value: SubagentThinkingOption) => void;
   disabled?: boolean;
 }) {
+  const options = useMemo<SelectDropdownOption[]>(() => (
+    SUBAGENT_THINKING_OPTIONS.map((option) => ({
+      value: option,
+      label: option === "inherit" ? "跟随主会话思考强度" : option === "off" ? "关闭思考" : option,
+    }))
+  ), []);
+
   return (
-    <select
+    <SelectDropdown
       value={value}
-      onChange={(e) => onChange(e.target.value as SubagentThinkingOption)}
+      options={options}
+      onChange={(nextValue) => onChange(nextValue as SubagentThinkingOption)}
       disabled={disabled}
-      style={{ ...inputStyle, opacity: disabled ? 0.6 : 1, cursor: disabled ? "not-allowed" : "pointer" }}
-    >
-      {SUBAGENT_THINKING_OPTIONS.map((option) => (
-        <option key={option} value={option}>{option === "inherit" ? "跟随主会话思考强度" : option === "off" ? "关闭思考" : option}</option>
-      ))}
-    </select>
+      size="field"
+      placement="auto"
+      ariaLabel="选择思考强度"
+    />
   );
 }
 
@@ -347,10 +376,19 @@ function parseRawEnv(text: string): { env: Record<string, string>; errors: strin
 
 function formatRecommendedAction(status: TrellisSetupStatus): string {
   if (status.recommendedAction === "fix-prerequisites") return "请先完成系统前置要求，然后再安装或更新 Trellis。";
-  if (status.recommendedAction === "initialize") return "当前工作区还没有 Trellis，可安装并初始化 Pi Agent 支持。";
+  if (status.recommendedAction === "initialize") {
+    return status.cli.installed
+      ? "当前工作区还没有 Trellis。启用 Trellis 面板后，可在面板打开初始化命令并手动执行。"
+      : "当前工作区还没有 Trellis，且尚未检测到 Trellis CLI。请先安装 CLI。";
+  }
   if (status.recommendedAction === "update") return "当前工作区已有 Trellis，请使用更新操作同步 CLI 和项目模板。";
   if (status.recommendedAction === "ready") return "当前工作区已启用 Trellis，可直接使用面板，也可以执行更新。";
   return "请选择工作区。";
+}
+
+function yolkConfigsEqual(a: PiWebYolkConfig | null, b: PiWebYolkConfig | null): boolean {
+  if (!a || !b) return a === b;
+  return a.defaultToolPreset === b.defaultToolPreset;
 }
 
 function worktreeConfigsEqual(a: PiWebWorktreeConfig | null, b: PiWebWorktreeConfig | null): boolean {
@@ -387,13 +425,27 @@ function editorConfigsEqual(a: PiWebEditorConfig | null, b: PiWebEditorConfig | 
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string | null; onClose: () => void; onConfigChange?: () => void }) {
-  const [section, setSection] = useState<SettingsSection>("worktree");
+export function SettingsConfig({
+  cwd,
+  onClose,
+  onConfigChange,
+  terminalEnabled = false,
+  onOpenTerminalCommand,
+}: {
+  cwd: string | null;
+  onClose: () => void;
+  onConfigChange?: () => void;
+  terminalEnabled?: boolean;
+  onOpenTerminalCommand?: (cwd: string, command: string) => void;
+}) {
+  const [section, setSection] = useState<SettingsSection>("yolk");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [configPath, setConfigPath] = useState("");
   const [exists, setExists] = useState(false);
   const [defaults, setDefaults] = useState<PiWebConfig | null>(null);
+  const [yolk, setYolk] = useState<PiWebYolkConfig | null>(null);
+  const [savedYolk, setSavedYolk] = useState<PiWebYolkConfig | null>(null);
   const [worktree, setWorktree] = useState<PiWebWorktreeConfig | null>(null);
   const [savedWorktree, setSavedWorktree] = useState<PiWebWorktreeConfig | null>(null);
   const [trellis, setTrellis] = useState<PiWebTrellisConfig | null>(null);
@@ -413,17 +465,16 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
   const [trellisStatus, setTrellisStatus] = useState<TrellisSetupStatus | null>(null);
   const [trellisStatusLoading, setTrellisStatusLoading] = useState(false);
   const [trellisStatusError, setTrellisStatusError] = useState<string | null>(null);
-  const [trellisAction, setTrellisAction] = useState<"init" | "update" | null>(null);
+  const [trellisAction, setTrellisAction] = useState<"install" | "update" | null>(null);
   const [trellisOutput, setTrellisOutput] = useState<string | null>(null);
   const [trellisWorkflowOpen, setTrellisWorkflowOpen] = useState(false);
   const [modelList, setModelList] = useState<ModelListItem[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
-  const [developerName, setDeveloperName] = useState("");
-  const [developerNameTouched, setDeveloperNameTouched] = useState(false);
+
 
   const dirty = useMemo(
-    () => !worktreeConfigsEqual(worktree, savedWorktree) || !trellisConfigsEqual(trellis, savedTrellis) || !usageConfigsEqual(usage, savedUsage) || !terminalConfigsEqual(terminal, savedTerminal) || !chatGptConfigsEqual(chatgpt, savedChatgpt) || !editorConfigsEqual(editor, savedEditor),
-    [worktree, savedWorktree, trellis, savedTrellis, usage, savedUsage, terminal, savedTerminal, chatgpt, savedChatgpt, editor, savedEditor],
+    () => !yolkConfigsEqual(yolk, savedYolk) || !worktreeConfigsEqual(worktree, savedWorktree) || !trellisConfigsEqual(trellis, savedTrellis) || !usageConfigsEqual(usage, savedUsage) || !terminalConfigsEqual(terminal, savedTerminal) || !chatGptConfigsEqual(chatgpt, savedChatgpt) || !editorConfigsEqual(editor, savedEditor),
+    [yolk, savedYolk, worktree, savedWorktree, trellis, savedTrellis, usage, savedUsage, terminal, savedTerminal, chatgpt, savedChatgpt, editor, savedEditor],
   );
 
   const loadConfig = useCallback(async (signal?: AbortSignal) => {
@@ -435,6 +486,8 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
       const data = await res.json() as WebConfigResponse;
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setDefaults(data.defaults);
+      setYolk(data.config.yolk);
+      setSavedYolk(data.config.yolk);
       setWorktree(data.config.worktree);
       setSavedWorktree(data.config.worktree);
       setTrellis(data.config.trellis);
@@ -487,9 +540,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
       const res = await fetch(`/api/trellis/setup/status?cwd=${encodeURIComponent(cwd)}`, { signal });
       const data = await res.json() as TrellisStatusResponse;
       if (!res.ok || data.error || !data.status) throw new Error(data.error ?? `HTTP ${res.status}`);
-      const status = data.status;
-      setTrellisStatus(status);
-      setDeveloperName((prev) => (!developerNameTouched || !prev.trim()) ? status.suggestedDeveloperName : prev);
+      setTrellisStatus(data.status);
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
       setTrellisStatus(null);
@@ -497,7 +548,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
     } finally {
       setTrellisStatusLoading(false);
     }
-  }, [cwd, developerNameTouched]);
+  }, [cwd]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -506,8 +557,6 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
   }, [loadConfig]);
 
   useEffect(() => {
-    setDeveloperName("");
-    setDeveloperNameTouched(false);
     setTrellisOutput(null);
   }, [cwd]);
 
@@ -518,6 +567,11 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
     void loadModels(controller.signal);
     return () => controller.abort();
   }, [section, loadModels, loadTrellisStatus]);
+
+  const updateYolk = useCallback((patch: Partial<PiWebYolkConfig>) => {
+    setYolk((prev) => prev ? { ...prev, ...patch } : prev);
+    setNotice(null);
+  }, []);
 
   const updateWorktree = useCallback((patch: Partial<PiWebWorktreeConfig>) => {
     setWorktree((prev) => prev ? { ...prev, ...patch } : prev);
@@ -703,6 +757,8 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
 
   const applyLoadedConfig = useCallback((config: PiWebConfig, path: string, configExists: boolean, nextDefaults?: PiWebConfig) => {
     if (nextDefaults) setDefaults(nextDefaults);
+    setYolk(config.yolk);
+    setSavedYolk(config.yolk);
     setWorktree(config.worktree);
     setSavedWorktree(config.worktree);
     setTrellis(config.trellis);
@@ -721,7 +777,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
   }, [onConfigChange]);
 
   const saveConfig = useCallback(async (successNotice?: string): Promise<boolean> => {
-    if (!worktree || !trellis || !usage || !terminal || !chatgpt || !editor) return false;
+    if (!yolk || !worktree || !trellis || !usage || !terminal || !chatgpt || !editor) return false;
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -729,7 +785,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
       const res = await fetch("/api/web-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ worktree, trellis, usage, terminal, chatgpt, editor }),
+        body: JSON.stringify({ yolk, worktree, trellis, usage, terminal, chatgpt, editor }),
       });
       const data = await res.json() as WebConfigResponse & { success?: boolean };
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -742,14 +798,15 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
     } finally {
       setSaving(false);
     }
-  }, [applyLoadedConfig, worktree, trellis, usage, terminal, chatgpt, editor]);
+  }, [applyLoadedConfig, yolk, worktree, trellis, usage, terminal, chatgpt, editor]);
 
   const handleSave = useCallback(async () => {
-    await saveConfig("设置已保存。Usage/ChatGPT/Trellis/Editor 设置会立即生效，WorkTree 设置会用于下一次创建 New WorkTree。");
+    await saveConfig("设置已保存。蛋黄𝝅/Usage/ChatGPT/Trellis/Editor 设置会立即生效，WorkTree 设置会用于下一次创建 New WorkTree。");
   }, [saveConfig]);
 
   const resetToDefaults = useCallback(() => {
     if (!defaults) return;
+    setYolk(defaults.yolk);
     setWorktree(defaults.worktree);
     setTrellis(defaults.trellis);
     setUsage(defaults.usage);
@@ -759,49 +816,46 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
     setNotice("已在表单中恢复默认值，点击保存后会写入 pi-web.json。");
   }, [defaults]);
 
-  const runTrellisSetupAction = useCallback(async (action: "init" | "update") => {
-    if (!cwd || !trellis) return;
+  const runTrellisInstallAction = useCallback(async () => {
+    if (!trellis) return;
     if (dirty) {
       const saved = await saveConfig();
       if (!saved) return;
     }
-    setTrellisAction(action);
+    setTrellisAction("install");
     setError(null);
     setNotice(null);
     setTrellisOutput(null);
     try {
-      const res = await fetch(`/api/trellis/setup/${action}`, {
+      const res = await fetch("/api/trellis/setup/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "init" ? { cwd, developerName: developerName.trim() } : { cwd }),
+        body: JSON.stringify({ cwd }),
       });
       const data = await res.json() as TrellisActionResponse;
       if (!res.ok || data.error || !data.status) throw new Error(data.error ?? `HTTP ${res.status}`);
       setTrellisStatus(data.status);
       setTrellisOutput(data.output || "操作完成。");
-      if (data.config) {
-        setWorktree(data.config.worktree);
-        setSavedWorktree(data.config.worktree);
-        setTrellis(data.config.trellis);
-        setSavedTrellis(data.config.trellis);
-        setUsage(data.config.usage);
-        setSavedUsage(data.config.usage);
-        setTerminal(data.config.terminal);
-        setSavedTerminal(data.config.terminal);
-        setChatgpt(data.config.chatgpt);
-        setSavedChatgpt(data.config.chatgpt);
-        setEditor(data.config.editor);
-        setSavedEditor(data.config.editor);
-        onConfigChange?.();
-      }
-      setNotice(action === "init" ? "Trellis 已初始化，右侧抽屉已自动启用。" : "Trellis 已更新。");
+      setNotice("Trellis CLI 已安装。开启 Trellis 面板后，可在未初始化工作区中打开初始化命令并手动执行。");
       void loadTrellisStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setTrellisAction(null);
     }
-  }, [cwd, developerName, dirty, loadTrellisStatus, onConfigChange, saveConfig, trellis]);
+  }, [cwd, dirty, loadTrellisStatus, saveConfig, trellis]);
+
+  const openTrellisUpdateInTerminal = useCallback(async () => {
+    if (!cwd || !trellis || !terminalEnabled || !onOpenTerminalCommand) return;
+    if (dirty) {
+      const saved = await saveConfig();
+      if (!saved) return;
+    }
+    setNotice(null);
+    setError(null);
+    onOpenTerminalCommand(cwd, "trellis update");
+    onClose();
+  }, [cwd, dirty, onClose, onOpenTerminalCommand, saveConfig, terminalEnabled, trellis]);
 
   const renderSectionButton = (id: SettingsSection, label: string, description: string) => {
     const active = section === id;
@@ -833,11 +887,9 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
     ? "请先选择工作区。"
     : trellisStatusError
       ? trellisStatusError
-      : !developerName.trim()
-        ? "请输入 Trellis 开发者名称。"
-        : trellisStatus?.blockingReasons[0] ?? null;
-  const canInitializeTrellis = !!cwd && !!trellisStatus?.canInitialize && !!developerName.trim() && !trellisBusy && !trellisStatusLoading;
-  const canUpdateTrellis = !!cwd && !!trellisStatus?.canUpdate && !trellisBusy && !trellisStatusLoading;
+      : trellisStatus?.blockingReasons[0] ?? null;
+  const canInstallTrellisCli = !trellisStatus?.cli.installed && !trellisBusy && !trellisStatusLoading;
+  const canUpdateTrellis = !!cwd && !!trellisStatus?.canUpdate && terminalEnabled && !!onOpenTerminalCommand && !trellisBusy && !trellisStatusLoading;
 
   return (
     <>
@@ -886,6 +938,7 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
 
         <div className="settings-modal-body" style={{ display: "flex", minHeight: 0 }}>
           <div style={{ width: 150, borderRight: "1px solid var(--border)", padding: 10, background: "var(--bg-subtle)", flexShrink: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+            {renderSectionButton("yolk", "蛋黄𝝅", "新会话默认聊天行为")}
             {renderSectionButton("worktree", "WorkTree", "New WorkTree 默认配置")}
             {renderSectionButton("usage", "Usage", "Usage 统计范围")}
             {renderSectionButton("terminal", "Terminal", "Web 终端设置")}
@@ -897,12 +950,30 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
           <div style={{ padding: 18, overflow: "auto", flex: 1 }}>
             {loading ? (
               <div style={{ color: "var(--text-muted)", fontSize: 13 }}>正在加载设置…</div>
-            ) : worktree && trellis && usage && terminal && chatgpt && editor ? (
+            ) : yolk && worktree && trellis && usage && terminal && chatgpt && editor ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {error && <div style={{ padding: "8px 10px", borderRadius: 8, background: "rgba(239,68,68,0.12)", color: "#f87171", fontSize: 12, overflowWrap: "anywhere" }}>{error}</div>}
                 {notice && <div style={{ padding: "8px 10px", borderRadius: 8, background: "rgba(37,99,235,0.12)", color: "var(--accent)", fontSize: 12, overflowWrap: "anywhere" }}>{notice}</div>}
 
-                {section === "worktree" ? (
+                {section === "yolk" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    <div>
+                      <h3 style={{ margin: 0, color: "var(--text)", fontSize: 15 }}>蛋黄𝝅 默认配置</h3>
+                      <p style={{ margin: "5px 0 0", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
+                        控制新聊天的默认交互行为。保存到 <code style={{ fontFamily: "var(--font-mono)", color: "var(--text)", overflowWrap: "anywhere" }}>{configPath}</code>
+                        {exists ? "" : "（保存时会自动创建）"}
+                      </p>
+                    </div>
+                    <Field label="默认工具预设" description="新建会话时默认选中的工具预设。仍可在输入框右下角随时手动切换；已有会话会保留当前工具状态。">
+                      <SelectDropdown
+                        value={yolk.defaultToolPreset}
+                        options={TOOL_PRESET_OPTIONS}
+                        onChange={(defaultToolPreset) => updateYolk({ defaultToolPreset: defaultToolPreset as PiWebToolPreset })}
+                        ariaLabel="选择默认工具预设"
+                      />
+                    </Field>
+                  </div>
+                ) : section === "worktree" ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                     <div>
                       <h3 style={{ margin: 0, color: "var(--text)", fontSize: 15 }}>New WorkTree 默认配置</h3>
@@ -917,14 +988,15 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                         <TextInput value={worktree.baseRef} onChange={(baseRef) => updateWorktree({ baseRef })} placeholder="HEAD" />
                       </Field>
                       <Field label="会话展示方式" description="控制 WorkTree 会话在支持的位置如何分组/展示。当前侧边栏会优先按独立工作目录展示。">
-                        <select
+                        <SelectDropdown
                           value={worktree.sessionDisplay}
-                          onChange={(e) => updateWorktree({ sessionDisplay: e.target.value as PiWebWorktreeConfig["sessionDisplay"] })}
-                          style={inputStyle}
-                        >
-                          <option value="separate">独立项目条目</option>
-                          <option value="tag">在项目内标记</option>
-                        </select>
+                          options={[
+                            { value: "separate", label: "独立项目条目" },
+                            { value: "tag", label: "在项目内标记" },
+                          ]}
+                          onChange={(sessionDisplay) => updateWorktree({ sessionDisplay: sessionDisplay as PiWebWorktreeConfig["sessionDisplay"] })}
+                          ariaLabel="选择 WorkTree 会话展示方式"
+                        />
                       </Field>
                     </div>
 
@@ -985,19 +1057,20 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                     />
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                       <Field label="终端类型" description="Windows 可选择 cmd、Windows PowerShell 或 PowerShell 7；选择 custom 时会使用下面填写的绝对路径。">
-                        <select
+                        <SelectDropdown
                           value={terminal.shell}
-                          onChange={(e) => updateTerminal({ shell: e.target.value as PiWebTerminalConfig["shell"] })}
-                          style={inputStyle}
-                        >
-                          <option value="zsh">zsh</option>
-                          <option value="bash">bash</option>
-                          <option value="sh">sh</option>
-                          <option value="cmd">cmd</option>
-                          <option value="powershell">Windows PowerShell</option>
-                          <option value="pwsh">PowerShell 7</option>
-                          <option value="custom">custom path</option>
-                        </select>
+                          options={[
+                            { value: "zsh", label: "zsh" },
+                            { value: "bash", label: "bash" },
+                            { value: "sh", label: "sh" },
+                            { value: "cmd", label: "cmd" },
+                            { value: "powershell", label: "Windows PowerShell" },
+                            { value: "pwsh", label: "PowerShell 7" },
+                            { value: "custom", label: "custom path" },
+                          ]}
+                          onChange={(shell) => updateTerminal({ shell: shell as PiWebTerminalConfig["shell"] })}
+                          ariaLabel="选择终端类型"
+                        />
                       </Field>
                       <Field label="Custom shell path" description="必须是可执行文件的绝对路径，例如 /opt/homebrew/bin/fish 或 C:\\Program Files\\PowerShell\\7\\pwsh.exe。">
                         <TextInput
@@ -1163,13 +1236,12 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                       </p>
                     </div>
                     <Field label="编辑器实现" description="当前仅支持 Monaco；后续新增编辑器时会在这里切换。">
-                      <select
+                      <SelectDropdown
                         value={editor.kind}
-                        onChange={(e) => updateEditor({ kind: e.target.value as PiWebEditorConfig["kind"] })}
-                        style={inputStyle}
-                      >
-                        <option value="monaco">Monaco Editor</option>
-                      </select>
+                        options={[{ value: "monaco", label: "Monaco Editor" }]}
+                        onChange={(kind) => updateEditor({ kind: kind as PiWebEditorConfig["kind"] })}
+                        ariaLabel="选择编辑器实现"
+                      />
                     </Field>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderRadius: 10, background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
                       <div>
@@ -1389,25 +1461,22 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                           <Field label="分流失败时的任务类型" description="分流判断模型失败、超时或输出格式错误时使用。">
-                            <select
+                            <SelectDropdown
                               value={trellis.subagents.router.fallbackOnError.modality}
-                              onChange={(e) => updateRouter({ fallbackOnError: { ...trellis.subagents.router.fallbackOnError, modality: e.target.value as PiWebSubagentModality } })}
+                              options={SUBAGENT_MODALITIES.map((modality) => ({ value: modality, label: SUBAGENT_MODALITY_LABELS[modality] }))}
+                              onChange={(modality) => updateRouter({ fallbackOnError: { ...trellis.subagents.router.fallbackOnError, modality: modality as PiWebSubagentModality } })}
                               disabled={!trellis.subagents.enabled || !trellis.subagents.router.enabled}
-                              style={inputStyle}
-                            >
-                              <option value="text">文本任务</option>
-                              <option value="multimodal">多模态任务（图片/截图/视觉）</option>
-                            </select>
+                              ariaLabel="选择分流失败时的任务类型"
+                            />
                           </Field>
                           <Field label="分流失败时的任务等级" description="分流判断不可用时默认按哪个复杂度处理。建议 standard 或 complex。">
-                            <select
+                            <SelectDropdown
                               value={trellis.subagents.router.fallbackOnError.tier}
-                              onChange={(e) => updateRouter({ fallbackOnError: { ...trellis.subagents.router.fallbackOnError, tier: e.target.value as PiWebSubagentDifficultyTier } })}
+                              options={SUBAGENT_TIERS.map((tier) => ({ value: tier, label: SUBAGENT_TIER_LABELS[tier] }))}
+                              onChange={(tier) => updateRouter({ fallbackOnError: { ...trellis.subagents.router.fallbackOnError, tier: tier as PiWebSubagentDifficultyTier } })}
                               disabled={!trellis.subagents.enabled || !trellis.subagents.router.enabled}
-                              style={inputStyle}
-                            >
-                              {SUBAGENT_TIERS.map((tier) => <option key={tier} value={tier}>{SUBAGENT_TIER_LABELS[tier]}</option>)}
-                            </select>
+                              ariaLabel="选择分流失败时的任务等级"
+                            />
                           </Field>
                         </div>
                       </div>
@@ -1450,17 +1519,18 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                           return (
                             <div key={agent} style={{ display: "grid", gridTemplateColumns: "150px 120px minmax(180px, 1fr) 120px", gap: 8, alignItems: "center" }}>
                               <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>{agent}</code>
-                              <select
+                              <SelectDropdown
                                 value={agentConfig.strategy}
-                                onChange={(e) => updateSubagentAgent(agent, { strategy: e.target.value as PiWebSubagentAgentConfig["strategy"] })}
+                                options={[
+                                  { value: "default", label: "使用默认规则" },
+                                  { value: "route", label: "总是自动分流" },
+                                  { value: "fixed", label: "固定指定模型" },
+                                  { value: "disabled", label: "不使用这里的设置" },
+                                ]}
+                                onChange={(strategy) => updateSubagentAgent(agent, { strategy: strategy as PiWebSubagentAgentConfig["strategy"] })}
                                 disabled={!trellis.subagents.enabled}
-                                style={{ ...inputStyle, opacity: trellis.subagents.enabled ? 1 : 0.6 }}
-                              >
-                                <option value="default">使用默认规则</option>
-                                <option value="route">总是自动分流</option>
-                                <option value="fixed">固定指定模型</option>
-                                <option value="disabled">不使用这里的设置</option>
-                              </select>
+                                ariaLabel={`选择 ${agent} 覆盖策略`}
+                              />
                               <ModelPolicySelect
                                 value={fixed.model}
                                 onChange={(model) => updateSubagentAgent(agent, { fixed: { ...fixed, model } })}
@@ -1507,35 +1577,24 @@ export function SettingsConfig({ cwd, onClose, onConfigChange }: { cwd: string |
                       )}
                     </div>
 
-                    <Field label="Trellis 开发者名称" description="用于 trellis init -u；默认来自已检测到的 Trellis 身份，否则使用系统用户名。可编辑，不能为空。">
-                      <TextInput
-                        value={developerName}
-                        onChange={(value) => {
-                          setDeveloperNameTouched(true);
-                          setDeveloperName(value);
-                        }}
-                        placeholder="your-name"
-                      />
-                    </Field>
-
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                       <button
-                        onClick={() => void runTrellisSetupAction("init")}
-                        disabled={!canInitializeTrellis}
-                        title={canInitializeTrellis ? "安装并初始化 Trellis" : trellisBlockingReason ?? "当前工作区已安装 Trellis，请使用更新"}
-                        style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: canInitializeTrellis ? "var(--accent)" : "var(--border)", color: "white", cursor: canInitializeTrellis ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}
+                        onClick={() => void runTrellisInstallAction()}
+                        disabled={!canInstallTrellisCli}
+                        title={trellisStatus?.cli.installed ? "已检测到 Trellis CLI，无需安装" : "只安装 Trellis CLI，不运行会进入交互问询的 trellis init"}
+                        style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: canInstallTrellisCli ? "var(--accent)" : "var(--border)", color: "white", cursor: canInstallTrellisCli ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}
                       >
-                        {trellisAction === "init" ? "正在初始化…" : "安装并初始化 Trellis"}
+                        {trellisAction === "install" ? "正在安装…" : trellisStatus?.cli.installed ? "Trellis CLI 已安装" : "安装 Trellis CLI"}
                       </button>
                       <button
-                        onClick={() => void runTrellisSetupAction("update")}
+                        onClick={() => void openTrellisUpdateInTerminal()}
                         disabled={!canUpdateTrellis}
-                        title={canUpdateTrellis ? "更新 Trellis" : trellisBlockingReason ?? "当前工作区还没有 Trellis，请先初始化"}
+                        title={canUpdateTrellis ? "在终端中填入 trellis update，由用户执行" : !terminalEnabled ? "请先启用 Web Terminal" : trellisBlockingReason ?? "当前工作区还没有 Trellis，请先初始化"}
                         style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: canUpdateTrellis ? "var(--text)" : "var(--text-dim)", cursor: canUpdateTrellis ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}
                       >
-                        {trellisAction === "update" ? "正在更新…" : "更新 Trellis"}
+                        在终端中更新 Trellis
                       </button>
-                      {!canInitializeTrellis && !canUpdateTrellis && trellisBlockingReason && <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{trellisBlockingReason}</span>}
+                      {!canUpdateTrellis && trellisBlockingReason && <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{trellisBlockingReason}</span>}
                     </div>
 
                     {trellisOutput && (

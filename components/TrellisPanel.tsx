@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { SelectDropdown } from "./SelectDropdown";
+import type { TrellisSetupStatus } from "@/lib/trellis-setup-types";
 import type { TrellisTaskDetail, TrellisTaskProgressStage, TrellisTaskSummary, TrellisTasksResponse } from "@/lib/trellis-types";
 
 interface TrellisPanelProps {
@@ -10,6 +12,8 @@ interface TrellisPanelProps {
   focusedTaskKey?: string | null;
   onOpenFile?: (filePath: string, fileName: string) => void;
   onJoinTaskChat?: (task: TrellisTaskDetail) => void;
+  onOpenTerminalCommand?: (cwd: string, command: string) => void;
+  terminalEnabled?: boolean;
 }
 
 type ArtifactTab = "overview" | "prd" | "design" | "implement";
@@ -79,6 +83,16 @@ function formatDateTime(value?: string | null): string {
 
 function shortPath(path: string): string {
   return path.length > 44 ? `…${path.slice(-43)}` : path;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildTrellisSetupCommand(status: TrellisSetupStatus | null): string {
+  if (status?.project.hasTrellisDir) return "trellis update";
+  const developerName = status?.suggestedDeveloperName?.trim();
+  return developerName ? `trellis init -u ${shellQuote(developerName)} --pi` : "trellis init --pi";
 }
 
 interface TaskTreeNode {
@@ -165,7 +179,7 @@ function countRenderedTreeNodes(nodes: TaskTreeNode[], expandedKeys: Set<string>
   }, 0);
 }
 
-export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOpenFile, onJoinTaskChat }: TrellisPanelProps) {
+export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOpenFile, onJoinTaskChat, onOpenTerminalCommand, terminalEnabled = false }: TrellisPanelProps) {
   const [includeArchived, setIncludeArchived] = useState(includeArchivedDefault);
   const [refreshKey, setRefreshKey] = useState(0);
   const [tasks, setTasks] = useState<TrellisTaskSummary[]>([]);
@@ -182,6 +196,7 @@ export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOp
   const [statusFilter, setStatusFilter] = useState("all");
   const [artifactTab, setArtifactTab] = useState<ArtifactTab>("overview");
   const [expandedTaskKeys, setExpandedTaskKeys] = useState<Set<string>>(() => new Set());
+  const [setupStatus, setSetupStatus] = useState<TrellisSetupStatus | null>(null);
 
   useEffect(() => {
     setIncludeArchived(includeArchivedDefault);
@@ -230,6 +245,24 @@ export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOp
     void loadTasks(controller.signal);
     return () => controller.abort();
   }, [loadTasks, refreshKey]);
+
+  useEffect(() => {
+    if (!cwd || exists) {
+      setSetupStatus(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`/api/trellis/setup/status?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal })
+      .then(async (res) => {
+        const data = await res.json() as { status?: TrellisSetupStatus; error?: string };
+        if (!res.ok || data.error || !data.status) throw new Error(data.error ?? `HTTP ${res.status}`);
+        setSetupStatus(data.status);
+      })
+      .catch((err) => {
+        if ((err as { name?: string }).name !== "AbortError") setSetupStatus(null);
+      });
+    return () => controller.abort();
+  }, [cwd, exists, refreshKey]);
 
   useEffect(() => {
     setArtifactTab("overview");
@@ -313,15 +346,16 @@ export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOp
             outline: "none",
           }}
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ height: 28, borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-muted)", fontSize: 11 }}
-        >
-          {statusOptions.map((status) => (
-            <option key={status} value={status}>{status === "all" ? "全部" : formatStatus(status)}</option>
-          ))}
-        </select>
+        <div style={{ width: 120, flexShrink: 0 }}>
+          <SelectDropdown
+            value={statusFilter}
+            options={statusOptions.map((status) => ({ value: status, label: status === "all" ? "全部" : formatStatus(status) }))}
+            onChange={setStatusFilter}
+            ariaLabel="筛选 Trellis 任务状态"
+            size="field"
+            minWidth={140}
+          />
+        </div>
         <button
           onClick={() => setIncludeArchived((value) => !value)}
           title="包含已归档任务"
@@ -351,7 +385,12 @@ export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOp
       {error ? (
         <EmptyState title="无法加载 Trellis 任务" description={error} tone="error" />
       ) : !exists ? (
-        <EmptyState title="当前工作区未启用 Trellis" description="这个工作区里没有 .trellis/tasks。" />
+        <TrellisInitializeState
+          cwd={cwd}
+          status={setupStatus}
+          terminalEnabled={terminalEnabled}
+          onOpenTerminalCommand={onOpenTerminalCommand}
+        />
       ) : loading && tasks.length === 0 ? (
         <EmptyState title="正在加载 Trellis 任务…" description="正在读取当前工作区的任务元数据。" />
       ) : tasks.length === 0 ? (
@@ -399,6 +438,49 @@ export function TrellisPanel({ cwd, includeArchivedDefault, focusedTaskKey, onOp
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function TrellisInitializeState({
+  cwd,
+  status,
+  terminalEnabled,
+  onOpenTerminalCommand,
+}: {
+  cwd: string | null;
+  status: TrellisSetupStatus | null;
+  terminalEnabled: boolean;
+  onOpenTerminalCommand?: (cwd: string, command: string) => void;
+}) {
+  const command = buildTrellisSetupCommand(status);
+  const disabled = !cwd || !terminalEnabled || !onOpenTerminalCommand || (status?.blockingReasons.length ?? 0) > 0;
+  const hasTrellisDir = status?.project.hasTrellisDir ?? false;
+  const description = status?.blockingReasons.length
+    ? status.blockingReasons.join(" ")
+    : terminalEnabled
+      ? hasTrellisDir
+        ? "该工作区已有 .trellis，但还没有任务目录。点击按钮会打开底部终端并填入更新命令，请在终端中按回车执行。"
+        : "该工作区还没有 .trellis。点击按钮会打开底部终端并填入初始化命令，请在终端中按回车并回答 Trellis 的交互问询。"
+      : "该工作区还没有可读取的 Trellis 任务目录。请先在设置中启用 Web Terminal，再从这里打开初始化/更新命令。";
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", color: "var(--text-muted)", gap: 10 }}>
+      <div style={{ color: "var(--text)", fontSize: 15, fontWeight: 700 }}>{hasTrellisDir ? "当前工作区需要更新 Trellis" : "当前工作区尚未初始化 Trellis"}</div>
+      <div style={{ fontSize: 12, lineHeight: 1.5, maxWidth: 360 }}>{description}</div>
+      <code style={{ maxWidth: 360, padding: "7px 9px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 11, overflowWrap: "anywhere" }}>{command}</code>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (!cwd || disabled) return;
+          onOpenTerminalCommand?.(cwd, command);
+        }}
+        title={terminalEnabled ? "在终端中填入 Trellis 命令" : "请先在设置中启用 Web Terminal"}
+        style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: disabled ? "var(--border)" : "var(--accent)", color: "white", cursor: disabled ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}
+      >
+        {hasTrellisDir ? "在终端中更新" : "在终端中初始化"}
+      </button>
     </div>
   );
 }

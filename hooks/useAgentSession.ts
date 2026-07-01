@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
+import type { PiWebToolPreset } from "@/lib/pi-web-config";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -137,7 +138,8 @@ export interface UseAgentSessionOptions {
   onSubagentChange?: OnSubagentChange;
   autoScrollEnabled?: boolean;
   setNewSessionModel?: (model: { provider: string; modelId: string } | null) => void;
-  setToolPreset?: (preset: "none" | "default" | "full" | "subagent") => void;
+  setToolPreset?: (preset: PiWebToolPreset) => void;
+  defaultToolPreset?: PiWebToolPreset;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -231,6 +233,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSubagentChange,
     autoScrollEnabled = true,
+    defaultToolPreset = "default",
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -248,7 +251,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
   const [newSessionModel, setNewSessionModelState] = useState<{ provider: string; modelId: string } | null>(null);
-  const [toolPreset, setToolPreset] = useState<"none" | "default" | "full" | "subagent">("default");
+  const [toolPreset, setToolPreset] = useState<PiWebToolPreset>(isNew ? defaultToolPreset : "default");
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>("auto");
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxAttempts: number; errorMessage?: string } | null>(null);
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
@@ -272,12 +275,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollEnabledRef = useRef(autoScrollEnabled);
   const autoScrollStickyRef = useRef(true);
+  const toolPresetTouchedRef = useRef(false);
 
   const setNewSessionModel = opts.setNewSessionModel ?? setNewSessionModelState;
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? newSessionModel : currentModel;
+
+  useEffect(() => {
+    if (!isNew || toolPresetTouchedRef.current || messages.length > 0 || agentRunning) return;
+    setToolPresetState(defaultToolPreset);
+  }, [agentRunning, defaultToolPreset, isNew, messages.length, setToolPresetState]);
 
   const sessionStats = (() => {
     const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -739,7 +748,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, []);
 
-  const handleToolPresetChange = useCallback(async (preset: "none" | "default" | "full" | "subagent") => {
+  const handleToolPresetChange = useCallback(async (preset: PiWebToolPreset) => {
+    toolPresetTouchedRef.current = true;
     const { PRESET_NONE, PRESET_DEFAULT, PRESET_FULL, PRESET_SUBAGENT } = await import("@/components/ToolPanel");
     const toolNames = preset === "none" ? PRESET_NONE : preset === "default" ? PRESET_DEFAULT : preset === "subagent" ? PRESET_SUBAGENT : PRESET_FULL;
     setToolPresetState(preset);
