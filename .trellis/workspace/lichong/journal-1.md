@@ -238,3 +238,36 @@ Audited existing mobile support, planned Trellis task artifacts, implemented mob
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: Git panel commit details and diff viewer
+
+**Date**: 2026-07-01
+**Task**: Git panel commit details and diff viewer
+**Branch**: `main`
+
+### Summary
+
+Implemented Git panel commit inspection: selectable commit graph rows, commit metadata and changed-file list, bounded read-only commit/file diff APIs, large modal diff viewer, shared Git wire types, and module documentation updates. Validated with lint and TypeScript checks.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `04f9775` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
