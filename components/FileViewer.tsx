@@ -1,12 +1,25 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import { useTheme } from "@/hooks/useTheme";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins } from "@/lib/markdown";
 import type { PiWebEditorConfig } from "@/lib/pi-web-config";
-import { MonacoFileEditor } from "./MonacoFileEditor";
+import type { MonacoFileEditorProps } from "./MonacoFileEditor";
+
+const MonacoFileEditor = dynamic<MonacoFileEditorProps>(
+  () => import("./MonacoFileEditor").then((mod) => mod.MonacoFileEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ padding: 16, color: "var(--text-muted)", fontSize: 12 }}>
+        Loading editor…
+      </div>
+    ),
+  },
+);
 
 interface Props {
   filePath: string;

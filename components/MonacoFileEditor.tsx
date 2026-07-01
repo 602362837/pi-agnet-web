@@ -31,7 +31,7 @@ monacoGlobal.MonacoEnvironment = {
 
 type LineSelection = { startLine: number; endLine: number };
 
-interface Props {
+export interface MonacoFileEditorProps {
   value: string;
   language: string;
   filePath?: string;
@@ -271,7 +271,7 @@ export function MonacoFileEditor({
   onShiftClickSymbol,
   onActiveSymbolChange,
   onSelectedLinesChange,
-}: Props) {
+}: MonacoFileEditorProps) {
   const monacoLanguage = normalizeMonacoLanguage(language);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const targetLineDecorationsRef = useRef<monacoEditor.editor.IEditorDecorationsCollection | null>(null);
