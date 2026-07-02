@@ -907,3 +907,36 @@ Added the Trellis design subagent flow, including agent definition, workflow/pro
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: Merge upstream main
+
+**Date**: 2026-07-02
+**Task**: Merge upstream main
+**Branch**: `main`
+
+### Summary
+
+Fetched upstream/main, summarized and merged upstream Git diff viewer features, resolved GitPanel conflict by preserving branch switching and commit diff modal, and validated with lint and type-check.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e722983` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
